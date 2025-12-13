@@ -1,396 +1,546 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Family Tree Builder</title>
-    <link rel="stylesheet" href="styles.css">
-</head>
-<body>
-    <!-- Toast Container -->
-    <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta http-equiv="Cache-Control"
+            content="no-cache, no-store, must-revalidate">
+        <meta http-equiv="Pragma" content="no-cache">
+        <meta http-equiv="Expires" content="0">
+        <title>Family Tree Builder</title>
+        <link rel="icon"
+            href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='%2352796f' d='M12 2C8.13 2 5 5.13 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h1v1c0 .55.45 1 1 1h2c.55 0 1-.45 1-1v-1h1c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.87-3.13-7-7-7zm-2 15v-1h4v1h-4zm4-3h-4v-1.5h4V14z'/></svg>">
+        <link rel="stylesheet" href="styles.css">
+    </head>
+    <body>
+        <!-- Toast Container -->
+        <div id="toastContainer" class="toast-container"
+            aria-live="polite"></div>
 
-    <!-- Top Bar -->
-    <header class="top-bar" role="banner">
-        <div class="top-bar-inner">
-            <div class="top-bar-left">
-                <h1 class="brand">
-                    <svg class="brand-icon" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
-                        <path fill="currentColor" d="M12 2C8.13 2 5 5.13 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h1v1c0 .55.45 1 1 1h2c.55 0 1-.45 1-1v-1h1c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.87-3.13-7-7-7zm-2 15v-1h4v1h-4zm4-3h-4v-1.5h4V14z"/>
-                    </svg>
-                    Family Tree
-                </h1>
-            </div>
-
-            <div class="top-bar-center">
-                <div class="search-group">
-                    <svg class="search-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-                        <path fill="currentColor" d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
-                    </svg>
-                    <input type="text" id="searchInput" placeholder="Search name, tag, origin..." aria-label="Search people" />
-                    <button id="clearSearchBtn" class="btn-icon btn-clear hidden" title="Clear search" aria-label="Clear search">
-                        <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
-                    </button>
+        <!-- Top Bar -->
+        <header class="top-bar" role="banner">
+            <div class="top-bar-inner">
+                <div class="top-bar-left">
+                    <h1 class="brand">
+                        <svg class="brand-icon" viewBox="0 0 24 24" width="24"
+                            height="24" aria-hidden="true">
+                            <path fill="currentColor"
+                                d="M12 2C8.13 2 5 5.13 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h1v1c0 .55.45 1 1 1h2c.55 0 1-.45 1-1v-1h1c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.87-3.13-7-7-7zm-2 15v-1h4v1h-4zm4-3h-4v-1.5h4V14z" />
+                        </svg>
+                        Family Tree
+                    </h1>
                 </div>
-                <div class="filter-group">
-                    <select id="countryFilter" aria-label="Filter by country">
-                        <option value="All">All Countries</option>
-                    </select>
-                    <select id="cityFilter" aria-label="Filter by city">
-                        <option value="All">All Cities</option>
-                    </select>
-                    <button id="clearFiltersBtn" class="btn-sm btn-ghost hidden" title="Clear filters">
-                        <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
-                        Clear
-                    </button>
-                </div>
-            </div>
 
-            <div class="top-bar-right">
-                <button id="addPersonBtn" class="btn btn-primary" aria-label="Add new person">
-                    <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-                    <span class="btn-text">Add Person</span>
-                </button>
-                <button id="homeBtn" class="btn btn-ghost" title="Fit tree to screen (H)" aria-label="Fit tree to screen">
-                    <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
-                </button>
-                <div class="btn-divider"></div>
-                <button id="exportBtn" class="btn btn-ghost" title="Export data" aria-label="Export data">
-                    <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M19 12v7H5v-7H3v7c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-7h-2zm-6 .67l2.59-2.58L17 11.5l-5 5-5-5 1.41-1.41L11 12.67V3h2v9.67z"/></svg>
-                </button>
-                <button id="importBtn" class="btn btn-ghost" title="Import data" aria-label="Import data">
-                    <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z"/></svg>
-                </button>
-                <input type="file" id="importFile" accept=".json" style="display: none;" aria-hidden="true">
-                <button id="printBtn" class="btn btn-ghost" title="Print tree" aria-label="Print tree">
-                    <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3zm-3 11H8v-5h8v5zm3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm-1-9H6v4h12V3z"/></svg>
-                </button>
-                <div class="btn-divider"></div>
-                <button id="settingsBtn" class="btn btn-ghost" title="Settings" aria-label="Settings">
-                    <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M19.14 12.94c.04-.31.06-.63.06-.94 0-.31-.02-.63-.06-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
-                </button>
-                <button id="resetBtn" class="btn btn-ghost btn-danger-hover" title="Reset all data" aria-label="Reset all data">
-                    <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
-                </button>
-            </div>
-
-            <!-- Mobile menu toggle -->
-            <button id="mobileMenuBtn" class="btn-icon mobile-menu-btn" aria-label="Toggle menu" aria-expanded="false">
-                <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg>
-            </button>
-        </div>
-    </header>
-
-    <!-- Main Content -->
-    <main class="main-content" role="main">
-        <!-- Tree Canvas -->
-        <div class="tree-container" id="treeContainer">
-            <!-- Canvas grid background -->
-            <div id="canvasGrid" class="canvas-grid"></div>
-            
-            <svg id="treeSvg" width="100%" height="100%" role="img" aria-label="Family tree visualization">
-                <defs>
-                    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
-                        <polygon points="0 0, 10 3, 0 6" fill="#94a3b8" />
-                    </marker>
-                    <filter id="nodeShadow" x="-20%" y="-20%" width="140%" height="140%">
-                        <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.1"/>
-                    </filter>
-                    <filter id="nodeSelectedShadow" x="-20%" y="-20%" width="140%" height="140%">
-                        <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#2c5f2d" flood-opacity="0.25"/>
-                    </filter>
-                </defs>
-                <g id="edgesGroup"></g>
-                <g id="nodesGroup"></g>
-            </svg>
-
-            <!-- Empty State Overlay -->
-            <div id="emptyState" class="empty-state">
-                <div class="empty-state-content">
-                    <div class="empty-icon">
-                        <svg viewBox="0 0 24 24" width="64" height="64"><path fill="currentColor" d="M12 2C8.13 2 5 5.13 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h1v1c0 .55.45 1 1 1h2c.55 0 1-.45 1-1v-1h1c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.87-3.13-7-7-7z"/></svg>
-                    </div>
-                    <h2>Start Your Family Tree</h2>
-                    <p class="empty-subtitle">Begin documenting your family history</p>
-                    
-                    <div class="empty-actions">
-                        <button id="addPersonEmptyBtn" class="btn btn-primary btn-large">
-                            <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-                            Add First Person
-                        </button>
-                        <span class="empty-divider">or</span>
-                        <button id="loadSampleBtn" class="btn btn-ghost">
-                            <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
-                            Load Sample Data
+                <div class="top-bar-center">
+                    <div class="search-group">
+                        <svg class="search-icon" viewBox="0 0 24 24" width="18"
+                            height="18" aria-hidden="true">
+                            <path fill="currentColor"
+                                d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
+                        </svg>
+                        <input type="text" id="searchInput"
+                            placeholder="Search name, tag, origin..."
+                            aria-label="Search people" />
+                        <button id="clearSearchBtn"
+                            class="btn-icon btn-clear hidden"
+                            title="Clear search" aria-label="Clear search">
+                            <svg viewBox="0 0 24 24" width="16"
+                                height="16"><path fill="currentColor"
+                                    d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" /></svg>
                         </button>
                     </div>
-
-                    <div class="empty-tips">
-                        <h3>Quick Tips</h3>
-                        <ul>
-                            <li><kbd>Scroll</kbd> to zoom in/out</li>
-                            <li><kbd>Drag</kbd> canvas to pan around</li>
-                            <li><kbd>Click</kbd> a person to see details</li>
-                            <li><kbd>Drag</kbd> nodes to rearrange</li>
-                            <li><kbd>Ctrl+F</kbd> to search</li>
-                        </ul>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Zoom Controls -->
-            <div class="zoom-controls" id="zoomControls">
-                <button id="zoomInBtn" class="btn-icon" title="Zoom in (+)" aria-label="Zoom in">
-                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-                </button>
-                <span id="zoomLevel" class="zoom-level" title="Current zoom level">100%</span>
-                <button id="zoomOutBtn" class="btn-icon" title="Zoom out (-)" aria-label="Zoom out">
-                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19 13H5v-2h14v2z"/></svg>
-                </button>
-                <div class="zoom-divider"></div>
-                <button id="fitScreenBtn" class="btn-icon" title="Fit to screen (H)" aria-label="Fit to screen">
-                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M5 15H3v4c0 1.1.9 2 2 2h4v-2H5v-4zM5 5h4V3H5c-1.1 0-2 .9-2 2v4h2V5zm14-2h-4v2h4v4h2V5c0-1.1-.9-2-2-2zm0 16h-4v2h4c1.1 0 2-.9 2-2v-4h-2v4z"/></svg>
-                </button>
-            </div>
-        </div>
-
-        <!-- Right Drawer -->
-        <aside class="drawer" id="drawer" role="complementary" aria-label="Person details">
-            <div class="drawer-header">
-                <h2 id="drawerTitle">Person Details</h2>
-                <button id="closeDrawerBtn" class="btn-icon" aria-label="Close panel">
-                    <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
-                </button>
-            </div>
-            <div class="drawer-content" id="drawerContent">
-                <p class="drawer-placeholder">Select a person to view details</p>
-            </div>
-        </aside>
-    </main>
-
-    <!-- Modal for Add/Edit Person -->
-    <div id="personModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
-        <div class="modal-backdrop"></div>
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2 id="modalTitle">Add Person</h2>
-                <button class="btn-icon" id="closeModalBtn" aria-label="Close modal">
-                    <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
-                </button>
-            </div>
-            <form id="personForm" class="modal-body">
-                <input type="hidden" id="personId" name="personId">
-                <input type="hidden" id="personRelationContext" name="relationContext">
-                <div class="form-section">
-                    <h3>
-                        <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
-                        Basic Information
-                    </h3>
-                    <div class="form-group">
-                        <label for="personName">Full Name <span class="required">*</span></label>
-                        <input type="text" id="personName" name="name" required autocomplete="off" placeholder="Enter full name">
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="personGender">Gender</label>
-                            <select id="personGender" name="gender">
-                                <option value="">Not specified</option>
-                                <option value="Male">Male</option>
-                                <option value="Female">Female</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label for="personTag">Family Tag</label>
-                            <input type="text" id="personTag" name="tag" placeholder="e.g., Al-...">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="personBirthYear">Birth Year</label>
-                            <input type="number" id="personBirthYear" name="birthYear" min="1" max="2100" placeholder="YYYY">
-                        </div>
-                        <div class="form-group">
-                            <label for="personDeathYear">Death Year</label>
-                            <input type="number" id="personDeathYear" name="deathYear" min="1" max="2100" placeholder="YYYY">
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label for="personNotes">Notes</label>
-                        <textarea id="personNotes" name="notes" rows="2" placeholder="Additional information..."></textarea>
+                    <div class="filter-group">
+                        <select id="countryFilter"
+                            aria-label="Filter by country">
+                            <option value="All">All Countries</option>
+                        </select>
+                        <select id="cityFilter" aria-label="Filter by city">
+                            <option value="All">All Cities</option>
+                        </select>
+                        <button id="clearFiltersBtn"
+                            class="btn-sm btn-ghost hidden"
+                            title="Clear filters">
+                            <svg viewBox="0 0 24 24" width="14"
+                                height="14"><path fill="currentColor"
+                                    d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" /></svg>
+                            Clear
+                        </button>
                     </div>
                 </div>
 
-                <div class="form-section">
-                    <h3>
-                        <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
-                        Origin / Roots
-                    </h3>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="personOriginCountry">Country</label>
-                            <input type="text" id="personOriginCountry" name="originCountry" list="countrySuggestions" placeholder="Country of origin">
-                            <datalist id="countrySuggestions"></datalist>
-                        </div>
-                        <div class="form-group">
-                            <label for="personOriginCity">City</label>
-                            <input type="text" id="personOriginCity" name="originCity" list="citySuggestions" placeholder="City of origin">
-                            <datalist id="citySuggestions"></datalist>
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="personOriginArea">Area / Neighborhood</label>
-                            <input type="text" id="personOriginArea" name="originArea" placeholder="Village, neighborhood...">
-                        </div>
-                        <div class="form-group">
-                            <label for="personOriginFamilyBranch">Family Branch</label>
-                            <input type="text" id="personOriginFamilyBranch" name="originFamilyBranch" placeholder="Branch, tribe...">
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label for="personOriginNotes">Origin Notes</label>
-                        <textarea id="personOriginNotes" name="originNotes" rows="2" placeholder="Additional origin details..."></textarea>
-                    </div>
-                </div>
-
-                <div class="form-actions">
-                    <button type="button" class="btn btn-ghost" id="cancelFormBtn">Cancel</button>
-                    <button type="submit" class="btn btn-primary" id="savePersonBtn">
-                        <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
-                        Save
+                <div class="top-bar-right">
+                    <button id="addPersonBtn" class="btn btn-primary"
+                        aria-label="Add new person">
+                        <svg viewBox="0 0 24 24" width="16" height="16"><path
+                                fill="currentColor"
+                                d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" /></svg>
+                        <span class="btn-text">Add Person</span>
+                    </button>
+                    <button id="homeBtn" class="btn btn-ghost"
+                        title="Fit tree to screen (H)"
+                        aria-label="Fit tree to screen">
+                        <svg viewBox="0 0 24 24" width="18" height="18"><path
+                                fill="currentColor"
+                                d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" /></svg>
+                    </button>
+                    <div class="btn-divider"></div>
+                    <button id="exportBtn" class="btn btn-ghost"
+                        title="Export data" aria-label="Export data">
+                        <svg viewBox="0 0 24 24" width="18" height="18"><path
+                                fill="currentColor"
+                                d="M19 12v7H5v-7H3v7c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-7h-2zm-6 .67l2.59-2.58L17 11.5l-5 5-5-5 1.41-1.41L11 12.67V3h2v9.67z" /></svg>
+                    </button>
+                    <button id="importBtn" class="btn btn-ghost"
+                        title="Import data" aria-label="Import data">
+                        <svg viewBox="0 0 24 24" width="18" height="18"><path
+                                fill="currentColor"
+                                d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z" /></svg>
+                    </button>
+                    <input type="file" id="importFile" accept=".json"
+                        style="display: none;" aria-hidden="true">
+                    <button id="printBtn" class="btn btn-ghost"
+                        title="Print tree" aria-label="Print tree">
+                        <svg viewBox="0 0 24 24" width="18" height="18"><path
+                                fill="currentColor"
+                                d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3zm-3 11H8v-5h8v5zm3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm-1-9H6v4h12V3z" /></svg>
+                    </button>
+                    <div class="btn-divider"></div>
+                    <button id="settingsBtn" class="btn btn-ghost"
+                        title="Settings" aria-label="Settings">
+                        <svg viewBox="0 0 24 24" width="18" height="18"><path
+                                fill="currentColor"
+                                d="M19.14 12.94c.04-.31.06-.63.06-.94 0-.31-.02-.63-.06-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z" /></svg>
+                    </button>
+                    <button id="resetBtn" class="btn btn-ghost btn-danger-hover"
+                        title="Reset all data" aria-label="Reset all data">
+                        <svg viewBox="0 0 24 24" width="18" height="18"><path
+                                fill="currentColor"
+                                d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" /></svg>
                     </button>
                 </div>
-            </form>
-        </div>
-    </div>
 
-    <!-- Settings Modal -->
-    <div id="settingsModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
-        <div class="modal-backdrop"></div>
-        <div class="modal-content modal-small">
-            <div class="modal-header">
-                <h2 id="settingsTitle">
-                    <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19.14 12.94c.04-.31.06-.63.06-.94 0-.31-.02-.63-.06-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
-                    Settings
-                </h2>
-                <button class="btn-icon" id="closeSettingsBtn" aria-label="Close settings">
-                    <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+                <!-- Mobile menu toggle -->
+                <button id="mobileMenuBtn" class="btn-icon mobile-menu-btn"
+                    aria-label="Toggle menu" aria-expanded="false">
+                    <svg viewBox="0 0 24 24" width="24" height="24"><path
+                            fill="currentColor"
+                            d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z" /></svg>
                 </button>
             </div>
-            <div class="modal-body">
-                <div class="settings-section">
-                    <h4>Display</h4>
-                    <label class="toggle-label">
-                        <input type="checkbox" id="hideOriginBadgesToggle">
-                        <span class="toggle-switch"></span>
-                        <span>Hide origin badges on nodes</span>
-                    </label>
-                    <label class="toggle-label">
-                        <input type="checkbox" id="showCanvasGridToggle">
-                        <span class="toggle-switch"></span>
-                        <span>Show canvas grid</span>
-                    </label>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content" role="main">
+            <!-- Tree Canvas -->
+            <div class="tree-container" id="treeContainer">
+                <!-- Canvas grid background -->
+                <div id="canvasGrid" class="canvas-grid"></div>
+
+                <svg id="treeSvg" width="100%" height="100%" role="img"
+                    aria-label="Family tree visualization">
+                    <defs>
+                        <marker id="arrowhead" markerWidth="10"
+                            markerHeight="10" refX="9" refY="3" orient="auto">
+                            <polygon points="0 0, 10 3, 0 6" fill="#94a3b8" />
+                        </marker>
+                        <filter id="nodeShadow" x="-20%" y="-20%" width="140%"
+                            height="140%">
+                            <fedropshadow dx="0" dy="2" stdDeviation="3"
+                                flood-opacity="0.1" />
+                        </filter>
+                        <filter id="nodeSelectedShadow" x="-20%" y="-20%"
+                            width="140%" height="140%">
+                            <fedropshadow dx="0" dy="4" stdDeviation="8"
+                                flood-color="#2c5f2d" flood-opacity="0.25" />
+                        </filter>
+                    </defs>
+                    <g id="edgesGroup"></g>
+                    <g id="nodesGroup"></g>
+                </svg>
+
+                <!-- Empty State Overlay -->
+                <div id="emptyState" class="empty-state">
+                    <div class="empty-state-content">
+                        <div class="empty-icon">
+                            <svg viewBox="0 0 24 24" width="64"
+                                height="64"><path fill="currentColor"
+                                    d="M12 2C8.13 2 5 5.13 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h1v1c0 .55.45 1 1 1h2c.55 0 1-.45 1-1v-1h1c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.87-3.13-7-7-7z" /></svg>
+                        </div>
+                        <h2>Start Your Family Tree</h2>
+                        <p class="empty-subtitle">Begin documenting your family
+                            history</p>
+
+                        <div class="empty-actions">
+                            <button id="addPersonEmptyBtn"
+                                class="btn btn-primary btn-large">
+                                <svg viewBox="0 0 24 24" width="20"
+                                    height="20"><path fill="currentColor"
+                                        d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" /></svg>
+                                Add First Person
+                            </button>
+                            <span class="empty-divider">or</span>
+                            <button id="loadSampleBtn" class="btn btn-ghost">
+                                <svg viewBox="0 0 24 24" width="18"
+                                    height="18"><path fill="currentColor"
+                                        d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z" /></svg>
+                                Load Sample Data
+                            </button>
+                        </div>
+
+                        <div class="empty-tips">
+                            <h3>Quick Tips</h3>
+                            <ul>
+                                <li><kbd>Scroll</kbd> to zoom in/out</li>
+                                <li><kbd>Drag</kbd> canvas to pan around</li>
+                                <li><kbd>Click</kbd> a person to see
+                                    details</li>
+                                <li><kbd>Drag</kbd> nodes to rearrange</li>
+                                <li><kbd>Ctrl+F</kbd> to search</li>
+                            </ul>
+                        </div>
+                    </div>
                 </div>
-                <div class="settings-section">
-                    <h4>Accessibility</h4>
-                    <label class="toggle-label">
-                        <input type="checkbox" id="reduceMotionToggle">
-                        <span class="toggle-switch"></span>
-                        <span>Reduce motion</span>
-                    </label>
-                </div>
-                <div class="settings-section">
-                    <h4>Data</h4>
-                    <button id="loadSampleSettingsBtn" class="btn btn-ghost btn-full">
-                        <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
-                        Load Sample Family
+
+                <!-- Zoom Controls -->
+                <div class="zoom-controls" id="zoomControls">
+                    <button id="zoomInBtn" class="btn-icon" title="Zoom in (+)"
+                        aria-label="Zoom in">
+                        <svg viewBox="0 0 24 24" width="20" height="20"><path
+                                fill="currentColor"
+                                d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" /></svg>
+                    </button>
+                    <span id="zoomLevel" class="zoom-level"
+                        title="Current zoom level">100%</span>
+                    <button id="zoomOutBtn" class="btn-icon"
+                        title="Zoom out (-)" aria-label="Zoom out">
+                        <svg viewBox="0 0 24 24" width="20" height="20"><path
+                                fill="currentColor"
+                                d="M19 13H5v-2h14v2z" /></svg>
+                    </button>
+                    <div class="zoom-divider"></div>
+                    <button id="fitScreenBtn" class="btn-icon"
+                        title="Fit to screen (H)" aria-label="Fit to screen">
+                        <svg viewBox="0 0 24 24" width="20" height="20"><path
+                                fill="currentColor"
+                                d="M5 15H3v4c0 1.1.9 2 2 2h4v-2H5v-4zM5 5h4V3H5c-1.1 0-2 .9-2 2v4h2V5zm14-2h-4v2h4v4h2V5c0-1.1-.9-2-2-2zm0 16h-4v2h4c1.1 0 2-.9 2-2v-4h-2v4z" /></svg>
                     </button>
                 </div>
-                <div class="settings-section settings-shortcuts">
-                    <h4>Keyboard Shortcuts</h4>
-                    <div class="shortcut-list">
-                        <div class="shortcut"><kbd>Ctrl</kbd>+<kbd>F</kbd> <span>Search</span></div>
-                        <div class="shortcut"><kbd>Ctrl</kbd>+<kbd>Z</kbd> <span>Undo</span></div>
-                        <div class="shortcut"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> <span>Redo</span></div>
-                        <div class="shortcut"><kbd>H</kbd> <span>Fit to screen</span></div>
-                        <div class="shortcut"><kbd>Del</kbd> <span>Delete selected</span></div>
-                        <div class="shortcut"><kbd>Esc</kbd> <span>Close modal/drawer</span></div>
-                    </div>
-                </div>
             </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-primary" id="closeSettingsOkBtn">Done</button>
+
+            <!-- Right Drawer -->
+            <aside class="drawer" id="drawer" role="complementary"
+                aria-label="Person details">
+                <div class="drawer-header">
+                    <h2 id="drawerTitle">Person Details</h2>
+                    <button id="closeDrawerBtn" class="btn-icon"
+                        aria-label="Close panel">
+                        <svg viewBox="0 0 24 24" width="24" height="24"><path
+                                fill="currentColor"
+                                d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" /></svg>
+                    </button>
+                </div>
+                <div class="drawer-content" id="drawerContent">
+                    <p class="drawer-placeholder">Select a person to view
+                        details</p>
+                </div>
+            </aside>
+        </main>
+
+        <!-- Modal for Add/Edit Person -->
+        <div id="personModal" class="modal" role="dialog" aria-modal="true"
+            aria-labelledby="modalTitle">
+            <div class="modal-backdrop"></div>
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2 id="modalTitle">Add Person</h2>
+                    <button class="btn-icon" id="closeModalBtn"
+                        aria-label="Close modal">
+                        <svg viewBox="0 0 24 24" width="24" height="24"><path
+                                fill="currentColor"
+                                d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" /></svg>
+                    </button>
+                </div>
+                <form id="personForm" class="modal-body">
+                    <input type="hidden" id="personId" name="personId">
+                    <input type="hidden" id="personRelationContext"
+                        name="relationContext">
+                    <div class="form-section">
+                        <h3>
+                            <svg viewBox="0 0 24 24" width="18"
+                                height="18"><path fill="currentColor"
+                                    d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" /></svg>
+                            Basic Information
+                        </h3>
+                        <div class="form-group">
+                            <label for="personName">Full Name <span
+                                    class="required">*</span></label>
+                            <input type="text" id="personName" name="name"
+                                required autocomplete="off"
+                                placeholder="Enter full name">
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="personGender">Gender</label>
+                                <select id="personGender" name="gender">
+                                    <option value>Not specified</option>
+                                    <option value="Male">Male</option>
+                                    <option value="Female">Female</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="personTag">Family Tag</label>
+                                <input type="text" id="personTag" name="tag"
+                                    placeholder="e.g., Al-...">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="personBirthYear">Birth Year</label>
+                                <input type="number" id="personBirthYear"
+                                    name="birthYear" min="1" max="2100"
+                                    placeholder="YYYY">
+                            </div>
+                            <div class="form-group">
+                                <label for="personDeathYear">Death Year</label>
+                                <input type="number" id="personDeathYear"
+                                    name="deathYear" min="1" max="2100"
+                                    placeholder="YYYY">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="personNotes">Notes</label>
+                            <textarea id="personNotes" name="notes" rows="2"
+                                placeholder="Additional information..."></textarea>
+                        </div>
+                    </div>
+
+                    <div class="form-section">
+                        <h3>
+                            <svg viewBox="0 0 24 24" width="18"
+                                height="18"><path fill="currentColor"
+                                    d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" /></svg>
+                            Origin / Roots
+                        </h3>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="personOriginCountry">Country</label>
+                                <input type="text" id="personOriginCountry"
+                                    name="originCountry"
+                                    list="countrySuggestions"
+                                    placeholder="Country of origin">
+                                <datalist id="countrySuggestions"></datalist>
+                            </div>
+                            <div class="form-group">
+                                <label for="personOriginCity">City</label>
+                                <input type="text" id="personOriginCity"
+                                    name="originCity" list="citySuggestions"
+                                    placeholder="City of origin">
+                                <datalist id="citySuggestions"></datalist>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="personOriginArea">Area /
+                                    Neighborhood</label>
+                                <input type="text" id="personOriginArea"
+                                    name="originArea"
+                                    placeholder="Village, neighborhood...">
+                            </div>
+                            <div class="form-group">
+                                <label for="personOriginFamilyBranch">Family
+                                    Branch</label>
+                                <input type="text" id="personOriginFamilyBranch"
+                                    name="originFamilyBranch"
+                                    placeholder="Branch, tribe...">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="personOriginNotes">Origin Notes</label>
+                            <textarea id="personOriginNotes" name="originNotes"
+                                rows="2"
+                                placeholder="Additional origin details..."></textarea>
+                        </div>
+                    </div>
+
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-ghost"
+                            id="cancelFormBtn">Cancel</button>
+                        <button type="submit" class="btn btn-primary"
+                            id="savePersonBtn">
+                            <svg viewBox="0 0 24 24" width="16"
+                                height="16"><path fill="currentColor"
+                                    d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" /></svg>
+                            Save
+                        </button>
+                    </div>
+                </form>
             </div>
         </div>
-    </div>
 
-    <!-- Link Person Modal -->
-    <div id="linkModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="linkModalTitle">
-        <div class="modal-backdrop"></div>
-        <div class="modal-content modal-small">
-            <div class="modal-header">
-                <h2 id="linkModalTitle">Link Person</h2>
-                <button class="btn-icon" id="closeLinkModalBtn" aria-label="Close modal">
-                    <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
-                </button>
-            </div>
-            <div class="modal-body">
-                <p id="linkModalDescription" class="link-description"></p>
-                <div class="form-group">
-                    <div class="search-group search-group-sm">
-                        <svg class="search-icon" viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
-                        <input type="text" id="linkSearchInput" placeholder="Search people..." aria-label="Search people to link">
-                    </div>
+        <!-- Settings Modal -->
+        <div id="settingsModal" class="modal" role="dialog" aria-modal="true"
+            aria-labelledby="settingsTitle">
+            <div class="modal-backdrop"></div>
+            <div class="modal-content modal-small">
+                <div class="modal-header">
+                    <h2 id="settingsTitle">
+                        <svg viewBox="0 0 24 24" width="20" height="20"><path
+                                fill="currentColor"
+                                d="M19.14 12.94c.04-.31.06-.63.06-.94 0-.31-.02-.63-.06-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z" /></svg>
+                        Settings
+                    </h2>
+                    <button class="btn-icon" id="closeSettingsBtn"
+                        aria-label="Close settings">
+                        <svg viewBox="0 0 24 24" width="24" height="24"><path
+                                fill="currentColor"
+                                d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" /></svg>
+                    </button>
                 </div>
-                <div class="form-group">
-                    <label for="linkPersonSelect">Select Person</label>
-                    <select id="linkPersonSelect" size="8" aria-label="Select person to link"></select>
-                </div>
-                <div class="form-group">
-                    <label>Relationship Type</label>
-                    <div class="radio-group">
-                        <label class="radio-label">
-                            <input type="radio" name="linkRelationType" value="parent" checked>
-                            <span>Parent (they are parent of selected)</span>
+                <div class="modal-body">
+                    <div class="settings-section">
+                        <h4>Display</h4>
+                        <label class="toggle-label">
+                            <input type="checkbox" id="hideOriginBadgesToggle">
+                            <span class="toggle-switch"></span>
+                            <span>Hide origin badges on nodes</span>
                         </label>
-                        <label class="radio-label">
-                            <input type="radio" name="linkRelationType" value="child">
-                            <span>Child (they are child of selected)</span>
-                        </label>
-                        <label class="radio-label">
-                            <input type="radio" name="linkRelationType" value="spouse">
-                            <span>Spouse</span>
+                        <label class="toggle-label">
+                            <input type="checkbox" id="showCanvasGridToggle">
+                            <span class="toggle-switch"></span>
+                            <span>Show canvas grid</span>
                         </label>
                     </div>
+                    <div class="settings-section">
+                        <h4>Accessibility</h4>
+                        <label class="toggle-label">
+                            <input type="checkbox" id="reduceMotionToggle">
+                            <span class="toggle-switch"></span>
+                            <span>Reduce motion</span>
+                        </label>
+                    </div>
+                    <div class="settings-section">
+                        <h4>Data</h4>
+                        <button id="loadSampleSettingsBtn"
+                            class="btn btn-ghost btn-full">
+                            <svg viewBox="0 0 24 24" width="18"
+                                height="18"><path fill="currentColor"
+                                    d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z" /></svg>
+                            Load Sample Family
+                        </button>
+                    </div>
+                    <div class="settings-section settings-shortcuts">
+                        <h4>Keyboard Shortcuts</h4>
+                        <div class="shortcut-list">
+                            <div class="shortcut"><kbd>Ctrl</kbd>+<kbd>F</kbd>
+                                <span>Search</span></div>
+                            <div class="shortcut"><kbd>Ctrl</kbd>+<kbd>Z</kbd>
+                                <span>Undo</span></div>
+                            <div
+                                class="shortcut"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd>
+                                <span>Redo</span></div>
+                            <div class="shortcut"><kbd>H</kbd> <span>Fit to
+                                    screen</span></div>
+                            <div class="shortcut"><kbd>Del</kbd> <span>Delete
+                                    selected</span></div>
+                            <div class="shortcut"><kbd>Esc</kbd> <span>Close
+                                    modal/drawer</span></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-primary"
+                        id="closeSettingsOkBtn">Done</button>
                 </div>
             </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-ghost" id="cancelLinkBtn">Cancel</button>
-                <button type="button" class="btn btn-primary" id="confirmLinkBtn">
-                    <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></svg>
-                    Link
-                </button>
+        </div>
+
+        <!-- Link Person Modal -->
+        <div id="linkModal" class="modal" role="dialog" aria-modal="true"
+            aria-labelledby="linkModalTitle">
+            <div class="modal-backdrop"></div>
+            <div class="modal-content modal-small">
+                <div class="modal-header">
+                    <h2 id="linkModalTitle">Link Person</h2>
+                    <button class="btn-icon" id="closeLinkModalBtn"
+                        aria-label="Close modal">
+                        <svg viewBox="0 0 24 24" width="24" height="24"><path
+                                fill="currentColor"
+                                d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" /></svg>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <p id="linkModalDescription" class="link-description"></p>
+                    <div class="form-group">
+                        <div class="search-group search-group-sm">
+                            <svg class="search-icon" viewBox="0 0 24 24"
+                                width="16" height="16"><path fill="currentColor"
+                                    d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" /></svg>
+                            <input type="text" id="linkSearchInput"
+                                placeholder="Search people..."
+                                aria-label="Search people to link">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="linkPersonSelect">Select Person</label>
+                        <select id="linkPersonSelect" size="8"
+                            aria-label="Select person to link"></select>
+                    </div>
+                    <div class="form-group">
+                        <label>Relationship Type</label>
+                        <div class="radio-group">
+                            <label class="radio-label">
+                                <input type="radio" name="linkRelationType"
+                                    value="parent" checked>
+                                <span>Parent (they are parent of
+                                    selected)</span>
+                            </label>
+                            <label class="radio-label">
+                                <input type="radio" name="linkRelationType"
+                                    value="child">
+                                <span>Child (they are child of selected)</span>
+                            </label>
+                            <label class="radio-label">
+                                <input type="radio" name="linkRelationType"
+                                    value="spouse">
+                                <span>Spouse</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-ghost"
+                        id="cancelLinkBtn">Cancel</button>
+                    <button type="button" class="btn btn-primary"
+                        id="confirmLinkBtn">
+                        <svg viewBox="0 0 24 24" width="16" height="16"><path
+                                fill="currentColor"
+                                d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z" /></svg>
+                        Link
+                    </button>
+                </div>
             </div>
         </div>
-    </div>
 
-    <!-- Confirm Modal -->
-    <div id="confirmModal" class="modal" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle">
-        <div class="modal-backdrop"></div>
-        <div class="modal-content modal-confirm">
-            <div class="modal-header">
-                <h2 id="confirmTitle">Confirm</h2>
-            </div>
-            <div class="modal-body">
-                <p id="confirmMessage"></p>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-ghost" id="confirmCancelBtn">Cancel</button>
-                <button type="button" class="btn btn-danger" id="confirmOkBtn">Confirm</button>
+        <!-- Confirm Modal -->
+        <div id="confirmModal" class="modal" role="alertdialog"
+            aria-modal="true" aria-labelledby="confirmTitle">
+            <div class="modal-backdrop"></div>
+            <div class="modal-content modal-confirm">
+                <div class="modal-header">
+                    <h2 id="confirmTitle">Confirm</h2>
+                </div>
+                <div class="modal-body">
+                    <p id="confirmMessage"></p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-ghost"
+                        id="confirmCancelBtn">Cancel</button>
+                    <button type="button" class="btn btn-danger"
+                        id="confirmOkBtn">Confirm</button>
+                </div>
             </div>
         </div>
-    </div>
 
-    <script src="app.js"></script>
-</body>
+        <script src="app.js"></script>
+    </body>
 </html>

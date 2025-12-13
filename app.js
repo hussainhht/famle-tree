@@ -1,5 +1,8 @@
-// Family Tree Builder - Main Application Logic
-// Data version 2 with origin/roots support
+/* ============================================
+   Family Tree Builder - Redesigned App
+   Plain HTML/CSS/JS - Offline
+   With File System Access API Support
+   ============================================ */
 
 // ===== STATE MANAGEMENT =====
 let state = {
@@ -7,13 +10,18 @@ let state = {
   ui: {
     hideOriginBadges: false,
     filterCountry: "All",
-    filterCity: "All"
+    filterCity: "All",
+    lockManualPositions: false,
   },
   people: [],
-  relations: []
+  relations: [],
+  meta: {
+    projectName: "Untitled",
+    createdAt: null,
+    updatedAt: null,
+  },
 };
 
-// Pan/Zoom state
 let viewState = {
   offsetX: 0,
   offsetY: 0,
@@ -21,89 +29,579 @@ let viewState = {
   isDragging: false,
   dragStartX: 0,
   dragStartY: 0,
-  draggedNode: null
+  draggedNode: null,
+  nodeDragStartX: 0,
+  nodeDragStartY: 0,
+  nodeMoved: false,
 };
 
 let selectedPersonId = null;
 let svgElement = null;
 let searchQuery = "";
+let currentRelationshipType = null;
+
+// ===== FILE SYSTEM STATE =====
+let fileHandle = null; // File System Access API handle
+let hasUnsavedChanges = false;
+let autoSaveTimeout = null;
+const AUTOSAVE_DELAY = 1000; // 1 second debounce
+
+// Check if File System Access API is available
+const hasFileSystemAccess =
+  "showSaveFilePicker" in window && "showOpenFilePicker" in window;
 
 // ===== INITIALIZATION =====
 document.addEventListener("DOMContentLoaded", () => {
-  loadFromLocalStorage();
+  loadData();
   initializeUI();
+  initializeFileSystem();
   renderTree();
-  updateFilters();
+  updateProjectUI();
 });
 
-// ===== LOCAL STORAGE =====
-function loadFromLocalStorage() {
+// Warn before closing if unsaved changes
+window.addEventListener("beforeunload", (e) => {
+  if (hasUnsavedChanges) {
+    e.preventDefault();
+    e.returnValue = "You have unsaved changes. Are you sure you want to leave?";
+    return e.returnValue;
+  }
+});
+
+// ===== FILE SYSTEM INITIALIZATION =====
+function initializeFileSystem() {
+  // Project buttons
+  document
+    .getElementById("newProjectBtn")
+    .addEventListener("click", newProject);
+  document
+    .getElementById("openProjectBtn")
+    .addEventListener("click", openProject);
+  document
+    .getElementById("saveProjectBtn")
+    .addEventListener("click", saveProject);
+  document
+    .getElementById("saveAsProjectBtn")
+    .addEventListener("click", saveProjectAs);
+
+  // Fallback file input for browsers without File System Access API
+  document
+    .getElementById("openProjectFile")
+    .addEventListener("change", handleOpenFileFallback);
+
+  // Keyboard shortcuts
+  document.addEventListener("keydown", handleKeyboardShortcuts);
+}
+
+function handleKeyboardShortcuts(e) {
+  // Ctrl+N: New Project
+  if (e.ctrlKey && e.key === "n") {
+    e.preventDefault();
+    newProject();
+  }
+  // Ctrl+O: Open Project
+  if (e.ctrlKey && e.key === "o") {
+    e.preventDefault();
+    openProject();
+  }
+  // Ctrl+S: Save
+  if (e.ctrlKey && !e.shiftKey && e.key === "s") {
+    e.preventDefault();
+    saveProject();
+  }
+  // Ctrl+Shift+S: Save As
+  if (e.ctrlKey && e.shiftKey && e.key === "S") {
+    e.preventDefault();
+    saveProjectAs();
+  }
+}
+
+// ===== DATA PERSISTENCE =====
+function loadData() {
   try {
     const saved = localStorage.getItem("familyTreeData");
     if (saved) {
       const loaded = JSON.parse(saved);
       migrateData(loaded);
       state = loaded;
+      // Ensure meta exists
+      if (!state.meta) {
+        state.meta = {
+          projectName: "Untitled",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+      }
     } else {
-      // Load sample data for demo
-      loadSampleData();
+      loadDemoData();
     }
   } catch (e) {
     console.error("Failed to load data:", e);
-    loadSampleData();
+    loadDemoData();
   }
 }
 
-function saveToLocalStorage() {
+function saveData() {
   try {
+    state.meta = state.meta || {};
+    state.meta.updatedAt = new Date().toISOString();
     localStorage.setItem("familyTreeData", JSON.stringify(state));
   } catch (e) {
     console.error("Failed to save data:", e);
-    alert("Failed to save data. Your storage might be full.");
+    showToast("Failed to save data", "error");
   }
 }
 
-// Debounced save
-let saveTimeout = null;
 function debouncedSave() {
-  clearTimeout(saveTimeout);
-  saveTimeout = setTimeout(saveToLocalStorage, 300);
+  clearTimeout(window.saveTimeout);
+  window.saveTimeout = setTimeout(saveData, 300);
+
+  // Mark as unsaved and trigger auto-save if we have a file handle
+  markUnsaved();
+  triggerAutoSave();
 }
 
-// ===== DATA MIGRATION =====
-function migrateData(data) {
-  if (!data.dataVersion || data.dataVersion < 2) {
-    // Migrate to version 2
-    data.dataVersion = 2;
-    
-    if (!data.ui) {
-      data.ui = {
-        hideOriginBadges: false,
-        filterCountry: "All",
-        filterCity: "All"
-      };
-    }
-    
-    if (data.people) {
-      data.people.forEach(person => {
-        if (!person.originCountry) person.originCountry = "";
-        if (!person.originCity) person.originCity = "";
-        if (!person.originArea) person.originArea = "";
-        if (!person.originFamilyBranch) person.originFamilyBranch = "";
-        if (!person.originNotes) person.originNotes = "";
-      });
-    }
+function markUnsaved() {
+  hasUnsavedChanges = true;
+  updateProjectStatus("unsaved");
+}
+
+function markSaved() {
+  hasUnsavedChanges = false;
+  updateProjectStatus("saved");
+}
+
+function triggerAutoSave() {
+  // Only auto-save if we have a file handle (File System Access API)
+  if (!fileHandle) return;
+
+  clearTimeout(autoSaveTimeout);
+  autoSaveTimeout = setTimeout(async () => {
+    await saveToFileHandle();
+  }, AUTOSAVE_DELAY);
+}
+
+// ===== PROJECT OPERATIONS =====
+async function newProject() {
+  if (hasUnsavedChanges) {
+    showConfirm(
+      "Unsaved Changes",
+      "You have unsaved changes. Create new project anyway?",
+      () => {
+        createNewProject();
+      }
+    );
+  } else {
+    createNewProject();
   }
 }
 
-// ===== SAMPLE DATA =====
-function loadSampleData() {
+function createNewProject() {
+  fileHandle = null;
   state = {
     dataVersion: 2,
     ui: {
       hideOriginBadges: false,
       filterCountry: "All",
-      filterCity: "All"
+      filterCity: "All",
+    },
+    people: [],
+    relations: [],
+    meta: {
+      projectName: "Untitled",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    },
+  };
+  saveData();
+  renderTree();
+  updateCountryFilter();
+  updateCityFilter();
+  closeDrawer();
+  markSaved();
+  updateProjectUI();
+  showToast("New project created", "success");
+}
+
+async function openProject() {
+  if (hasUnsavedChanges) {
+    showConfirm(
+      "Unsaved Changes",
+      "You have unsaved changes. Open another project anyway?",
+      () => performOpenProject()
+    );
+  } else {
+    performOpenProject();
+  }
+}
+
+async function performOpenProject() {
+  if (hasFileSystemAccess) {
+    try {
+      const [handle] = await window.showOpenFilePicker({
+        types: [
+          {
+            description: "Family Tree Files",
+            accept: {
+              "application/json": [".json", ".familytree.json"],
+            },
+          },
+        ],
+        multiple: false,
+      });
+
+      const file = await handle.getFile();
+      const content = await file.text();
+      const data = JSON.parse(content);
+
+      // Validate and load
+      const validationResult = validateProjectData(data);
+      if (!validationResult.valid) {
+        showToast(
+          "Invalid file: " + validationResult.errors.join(", "),
+          "error"
+        );
+        return;
+      }
+
+      // Store handle for future saves
+      fileHandle = handle;
+
+      // Apply warnings
+      validationResult.warnings.forEach((w) => showToast(w, "warning"));
+
+      // Load validated data
+      migrateData(data);
+      state = data;
+
+      // Ensure meta
+      if (!state.meta) {
+        state.meta = {
+          projectName: file.name.replace(/\.(familytree\.)?json$/i, ""),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+      } else {
+        state.meta.projectName =
+          state.meta.projectName ||
+          file.name.replace(/\.(familytree\.)?json$/i, "");
+      }
+
+      saveData();
+      renderTree();
+      updateCountryFilter();
+      updateCityFilter();
+      closeDrawer();
+      markSaved();
+      updateProjectUI();
+      addToRecentProjects(file.name);
+      showToast("Project opened", "success");
+    } catch (e) {
+      if (e.name !== "AbortError") {
+        console.error("Failed to open project:", e);
+        showToast("Failed to open project: " + e.message, "error");
+      }
+    }
+  } else {
+    // Fallback: use file input
+    document.getElementById("openProjectFile").click();
+  }
+}
+
+function handleOpenFileFallback(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    try {
+      const data = JSON.parse(ev.target.result);
+
+      // Validate
+      const validationResult = validateProjectData(data);
+      if (!validationResult.valid) {
+        showToast(
+          "Invalid file: " + validationResult.errors.join(", "),
+          "error"
+        );
+        return;
+      }
+
+      // Apply warnings
+      validationResult.warnings.forEach((w) => showToast(w, "warning"));
+
+      // Load
+      migrateData(data);
+      state = data;
+
+      // Ensure meta
+      if (!state.meta) {
+        state.meta = {
+          projectName: file.name.replace(/\.(familytree\.)?json$/i, ""),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+      }
+
+      fileHandle = null; // No file handle in fallback mode
+      saveData();
+      renderTree();
+      updateCountryFilter();
+      updateCityFilter();
+      closeDrawer();
+      markSaved();
+      updateProjectUI();
+      showToast("Project opened", "success");
+    } catch (error) {
+      showToast("Failed to open: " + error.message, "error");
+    }
+  };
+  reader.readAsText(file);
+  e.target.value = ""; // Reset input
+}
+
+async function saveProject() {
+  if (fileHandle && hasFileSystemAccess) {
+    await saveToFileHandle();
+  } else if (hasFileSystemAccess) {
+    // No handle yet, do Save As
+    await saveProjectAs();
+  } else {
+    // Fallback: download file
+    downloadProjectFile();
+  }
+}
+
+async function saveProjectAs() {
+  if (hasFileSystemAccess) {
+    try {
+      const suggestedName =
+        (state.meta?.projectName || "family-tree") + ".familytree.json";
+      const handle = await window.showSaveFilePicker({
+        suggestedName,
+        types: [
+          {
+            description: "Family Tree File",
+            accept: { "application/json": [".familytree.json", ".json"] },
+          },
+        ],
+      });
+
+      fileHandle = handle;
+
+      // Update project name from file
+      const file = await handle.getFile();
+      state.meta = state.meta || {};
+      state.meta.projectName = file.name.replace(/\.(familytree\.)?json$/i, "");
+
+      await saveToFileHandle();
+      updateProjectUI();
+      addToRecentProjects(file.name);
+    } catch (e) {
+      if (e.name !== "AbortError") {
+        console.error("Failed to save:", e);
+        showToast("Failed to save: " + e.message, "error");
+      }
+    }
+  } else {
+    // Fallback: download
+    downloadProjectFile();
+  }
+}
+
+async function saveToFileHandle() {
+  if (!fileHandle) return;
+
+  updateProjectStatus("saving");
+
+  try {
+    state.meta = state.meta || {};
+    state.meta.updatedAt = new Date().toISOString();
+
+    const writable = await fileHandle.createWritable();
+    const json = JSON.stringify(state, null, 2);
+    await writable.write(json);
+    await writable.close();
+
+    // Also save to localStorage as backup
+    saveData();
+
+    markSaved();
+    showToast("Saved", "success");
+  } catch (e) {
+    console.error("Failed to save to file:", e);
+    updateProjectStatus("error");
+    showToast("Failed to save: " + e.message, "error");
+  }
+}
+
+function downloadProjectFile() {
+  state.meta = state.meta || {};
+  state.meta.updatedAt = new Date().toISOString();
+
+  const json = JSON.stringify(state, null, 2);
+  const blob = new Blob([json], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  const filename =
+    (state.meta?.projectName || "family-tree") + ".familytree.json";
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+
+  // Save to localStorage too
+  saveData();
+  markSaved();
+  showToast("Downloaded: " + filename, "success");
+}
+
+// ===== DATA VALIDATION =====
+function validateProjectData(data) {
+  const errors = [];
+  const warnings = [];
+
+  // Check basic structure
+  if (!data || typeof data !== "object") {
+    errors.push("Invalid JSON structure");
+    return { valid: false, errors, warnings };
+  }
+
+  // Check people array
+  if (!Array.isArray(data.people)) {
+    data.people = [];
+    warnings.push("No people found, starting empty");
+  }
+
+  // Check relations array
+  if (!Array.isArray(data.relations)) {
+    data.relations = [];
+  }
+
+  // Validate people
+  const validPeopleIds = new Set();
+  const seenIds = new Set();
+
+  data.people = data.people.filter((p, idx) => {
+    // Must have id
+    if (!p.id) {
+      p.id = "p_" + Date.now() + "_" + idx;
+      warnings.push(`Person at index ${idx} had no ID, generated one`);
+    }
+
+    // Check for duplicate IDs
+    if (seenIds.has(p.id)) {
+      warnings.push(`Duplicate ID ${p.id} found, skipping`);
+      return false;
+    }
+    seenIds.add(p.id);
+
+    // Must have name
+    if (!p.name || typeof p.name !== "string" || !p.name.trim()) {
+      warnings.push(`Person ${p.id} has invalid name, using "Unknown"`);
+      p.name = "Unknown";
+    }
+
+    validPeopleIds.add(p.id);
+    return true;
+  });
+
+  // Validate relations - filter out invalid ones
+  const originalRelCount = data.relations.length;
+  data.relations = data.relations.filter((r) => {
+    if (!r.aId || !r.bId) return false;
+    if (!validPeopleIds.has(r.aId) || !validPeopleIds.has(r.bId)) {
+      return false;
+    }
+    if (!["PARENT_CHILD", "SPOUSE"].includes(r.type)) {
+      return false;
+    }
+    return true;
+  });
+
+  const removedRels = originalRelCount - data.relations.length;
+  if (removedRels > 0) {
+    warnings.push(`Removed ${removedRels} invalid relationship(s)`);
+  }
+
+  return { valid: errors.length === 0, errors, warnings };
+}
+
+// ===== PROJECT UI =====
+function updateProjectUI() {
+  const nameEl = document.getElementById("projectName");
+  const projectName = state.meta?.projectName || "Untitled";
+  nameEl.textContent = projectName;
+  nameEl.title = projectName;
+
+  // Update document title
+  document.title = projectName + " - Family Tree Builder";
+}
+
+function updateProjectStatus(status) {
+  const statusEl = document.getElementById("projectStatus");
+  statusEl.dataset.status = status;
+
+  const textEl = statusEl.querySelector(".status-text");
+  const statusTexts = {
+    saved: "Saved",
+    saving: "Saving…",
+    unsaved: "Unsaved",
+    error: "Error",
+  };
+  textEl.textContent = statusTexts[status] || status;
+}
+
+// ===== RECENT PROJECTS =====
+function addToRecentProjects(filename) {
+  try {
+    let recents = JSON.parse(localStorage.getItem("familyTreeRecents") || "[]");
+    recents = recents.filter((r) => r !== filename);
+    recents.unshift(filename);
+    recents = recents.slice(0, 5); // Keep last 5
+    localStorage.setItem("familyTreeRecents", JSON.stringify(recents));
+  } catch (e) {
+    console.warn("Could not save recent projects:", e);
+  }
+}
+
+function getRecentProjects() {
+  try {
+    return JSON.parse(localStorage.getItem("familyTreeRecents") || "[]");
+  } catch (e) {
+    return [];
+  }
+}
+
+function migrateData(data) {
+  if (!data.dataVersion || data.dataVersion < 2) {
+    data.dataVersion = 2;
+    if (!data.ui) {
+      data.ui = {
+        hideOriginBadges: false,
+        filterCountry: "All",
+        filterCity: "All",
+      };
+    }
+    if (data.people) {
+      data.people.forEach((p) => {
+        if (!p.originCountry) p.originCountry = "";
+        if (!p.originCity) p.originCity = "";
+        if (!p.originArea) p.originArea = "";
+        if (!p.originFamilyBranch) p.originFamilyBranch = "";
+        if (!p.originNotes) p.originNotes = "";
+      });
+    }
+  }
+}
+
+function loadDemoData() {
+  state = {
+    dataVersion: 2,
+    ui: {
+      hideOriginBadges: false,
+      filterCountry: "All",
+      filterCity: "All",
     },
     people: [
       {
@@ -120,7 +618,7 @@ function loadSampleData() {
         originCity: "Manama",
         originArea: "Old Manama",
         originFamilyBranch: "Al-Khalifa",
-        originNotes: "Original family from Manama"
+        originNotes: "Original family",
       },
       {
         id: "p2",
@@ -134,9 +632,9 @@ function loadSampleData() {
         y: 50,
         originCountry: "Bahrain",
         originCity: "A'ali",
-        originArea: "Central A'ali",
+        originArea: "Central",
         originFamilyBranch: "Al-Hassan",
-        originNotes: "Known for pottery craft"
+        originNotes: "",
       },
       {
         id: "p3",
@@ -152,7 +650,7 @@ function loadSampleData() {
         originCity: "Manama",
         originArea: "Juffair",
         originFamilyBranch: "Al-Khalifa",
-        originNotes: ""
+        originNotes: "",
       },
       {
         id: "p4",
@@ -168,7 +666,7 @@ function loadSampleData() {
         originCity: "Dammam",
         originArea: "Al-Faisaliyah",
         originFamilyBranch: "Al-Abdullah",
-        originNotes: "Moved to Bahrain in 1995"
+        originNotes: "",
       },
       {
         id: "p5",
@@ -184,7 +682,7 @@ function loadSampleData() {
         originCity: "Manama",
         originArea: "Seef",
         originFamilyBranch: "Al-Khalifa",
-        originNotes: ""
+        originNotes: "",
       },
       {
         id: "p6",
@@ -200,8 +698,8 @@ function loadSampleData() {
         originCity: "Manama",
         originArea: "Seef",
         originFamilyBranch: "Al-Khalifa",
-        originNotes: ""
-      }
+        originNotes: "",
+      },
     ],
     relations: [
       { id: "r1", type: "PARENT_CHILD", aId: "p1", bId: "p3" },
@@ -211,47 +709,78 @@ function loadSampleData() {
       { id: "r5", type: "PARENT_CHILD", aId: "p3", bId: "p6" },
       { id: "r6", type: "PARENT_CHILD", aId: "p4", bId: "p5" },
       { id: "r7", type: "PARENT_CHILD", aId: "p4", bId: "p6" },
-      { id: "r8", type: "SPOUSE", aId: "p3", bId: "p4" }
-    ]
+      { id: "r8", type: "SPOUSE", aId: "p3", bId: "p4" },
+    ],
+    meta: {
+      projectName: "Demo Family",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    },
   };
+  fileHandle = null;
+  markSaved();
+  updateProjectUI();
   debouncedSave();
 }
 
 // ===== UI INITIALIZATION =====
 function initializeUI() {
-  // Top bar buttons
-  document.getElementById("addPersonBtn").addEventListener("click", openAddPersonModal);
+  // Navbar buttons
+  document
+    .getElementById("addPersonBtn")
+    .addEventListener("click", openAddPersonModal);
+  document
+    .getElementById("filterBtn")
+    .addEventListener("click", toggleFilterPanel);
+  document
+    .getElementById("moreMenuBtn")
+    .addEventListener("click", toggleMoreMenu);
+
+  // More menu items
+  document
+    .getElementById("fitScreenBtn")
+    .addEventListener("click", fitTreeToScreen);
+  document
+    .getElementById("autoArrangeBtn")
+    .addEventListener("click", autoArrangeTree);
+  document
+    .getElementById("autoArrangeBtnToolbar")
+    .addEventListener("click", autoArrangeTree);
   document.getElementById("exportBtn").addEventListener("click", exportData);
-  document.getElementById("importBtn").addEventListener("click", () => document.getElementById("importFile").click());
+  document
+    .getElementById("importBtn")
+    .addEventListener("click", () =>
+      document.getElementById("importFile").click()
+    );
   document.getElementById("importFile").addEventListener("change", importData);
   document.getElementById("printBtn").addEventListener("click", printTree);
-  document.getElementById("resetBtn").addEventListener("click", resetData);
-  document.getElementById("settingsBtn").addEventListener("click", openSettings);
-  document.getElementById("homeBtn").addEventListener("click", fitTreeToScreen);
-  
-  // Empty state buttons
-  document.getElementById("addPersonEmptyBtn")?.addEventListener("click", openAddPersonModal);
-  document.getElementById("loadSampleBtn")?.addEventListener("click", () => {
-    loadSampleData();
-    renderTree();
-    updateFilters();
+  document
+    .getElementById("settingsBtn")
+    .addEventListener("click", openSettingsModal);
+  document.getElementById("resetBtn").addEventListener("click", () => {
+    showConfirm("Reset all data?", "This cannot be undone.", () => {
+      state.people = [];
+      state.relations = [];
+      saveData();
+      closeAllModals();
+      renderTree();
+      closeDrawer();
+    });
   });
-  
+
   // Search
-  const searchInput = document.getElementById("searchInput");
-  searchInput.addEventListener("input", (e) => {
+  document.getElementById("searchInput").addEventListener("input", (e) => {
     searchQuery = e.target.value.toLowerCase();
-    renderTree();
     updateClearSearchButton();
+    renderTree();
   });
-  
-  document.getElementById("clearSearchBtn")?.addEventListener("click", () => {
+  document.getElementById("clearSearchBtn").addEventListener("click", () => {
     document.getElementById("searchInput").value = "";
     searchQuery = "";
-    renderTree();
     updateClearSearchButton();
+    renderTree();
   });
-  
+
   // Filters
   document.getElementById("countryFilter").addEventListener("change", (e) => {
     state.ui.filterCountry = e.target.value;
@@ -260,15 +789,13 @@ function initializeUI() {
     updateClearFiltersButton();
     debouncedSave();
   });
-  
   document.getElementById("cityFilter").addEventListener("change", (e) => {
     state.ui.filterCity = e.target.value;
     renderTree();
     updateClearFiltersButton();
     debouncedSave();
   });
-  
-  document.getElementById("clearFiltersBtn")?.addEventListener("click", () => {
+  document.getElementById("clearFiltersBtn").addEventListener("click", () => {
     state.ui.filterCountry = "All";
     state.ui.filterCity = "All";
     document.getElementById("countryFilter").value = "All";
@@ -278,450 +805,1102 @@ function initializeUI() {
     updateClearFiltersButton();
     debouncedSave();
   });
-  
-  // Zoom controls
-  document.getElementById("zoomInBtn")?.addEventListener("click", () => zoomBy(1.2));
-  document.getElementById("zoomOutBtn")?.addEventListener("click", () => zoomBy(0.8));
-  document.getElementById("fitScreenBtn")?.addEventListener("click", fitTreeToScreen);
-  
-  // Modal close buttons
-  document.getElementById("closeModalBtn")?.addEventListener("click", closeAllModals);
-  document.getElementById("cancelFormBtn")?.addEventListener("click", closeAllModals);
-  document.getElementById("closeLinkModalBtn")?.addEventListener("click", closeAllModals);
-  document.getElementById("cancelLinkBtn")?.addEventListener("click", closeAllModals);
-  document.getElementById("confirmLinkBtn")?.addEventListener("click", confirmLinkPerson);
-  document.getElementById("closeSettingsBtn")?.addEventListener("click", closeAllModals);
-  document.getElementById("closeSettingsOkBtn")?.addEventListener("click", closeAllModals);
-  document.getElementById("confirmOkBtn")?.addEventListener("click", handleConfirmOk);
-  document.getElementById("confirmCancelBtn")?.addEventListener("click", closeAllModals);
-  document.getElementById("loadSampleSettingsBtn")?.addEventListener("click", () => {
-    loadSampleData();
-    renderTree();
-    updateFilters();
-    closeAllModals();
+
+  // Modals
+  document
+    .getElementById("personForm")
+    .addEventListener("submit", handlePersonFormSubmit);
+  document
+    .getElementById("closePersonModalBtn")
+    .addEventListener("click", closeAllModals);
+  document
+    .getElementById("cancelPersonBtn")
+    .addEventListener("click", closeAllModals);
+
+  document
+    .getElementById("closeRelationshipModalBtn")
+    .addEventListener("click", closeAllModals);
+  document.querySelectorAll(".tab-btn").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      const tabName = e.target.dataset.tab;
+      document
+        .querySelectorAll(".tab-content")
+        .forEach((t) => t.classList.remove("active"));
+      document.getElementById(tabName).classList.add("active");
+      document
+        .querySelectorAll(".tab-btn")
+        .forEach((b) => b.classList.remove("active"));
+      e.target.classList.add("active");
+    });
   });
-  
-  // Settings toggles
-  document.getElementById("hideOriginBadgesToggle")?.addEventListener("change", (e) => {
-    state.ui.hideOriginBadges = e.target.checked;
-    renderTree();
-    debouncedSave();
+
+  document
+    .getElementById("relationshipCreateForm")
+    .addEventListener("submit", handleRelationshipCreate);
+  document
+    .getElementById("relationshipLinkForm")
+    .addEventListener("submit", handleRelationshipLink);
+  document
+    .getElementById("relLinkSearch")
+    .addEventListener("input", filterLinkPersonList);
+  document
+    .getElementById("relLinkSearch")
+    .addEventListener("keydown", handleLinkListKeydown);
+  document
+    .getElementById("relLinkListbox")
+    .addEventListener("keydown", handleLinkListKeydown);
+
+  document
+    .getElementById("closeSettingsModalBtn")
+    .addEventListener("click", closeAllModals);
+  document
+    .getElementById("hideOriginBadgesToggle")
+    .addEventListener("change", (e) => {
+      state.ui.hideOriginBadges = e.target.checked;
+      renderTree();
+      debouncedSave();
+    });
+  document
+    .getElementById("showCanvasGridToggle")
+    .addEventListener("change", (e) => {
+      document
+        .getElementById("canvasGrid")
+        .classList.toggle("visible", e.target.checked);
+    });
+  document
+    .getElementById("reduceMotionToggle")
+    .addEventListener("change", (e) => {
+      document.documentElement.style.setProperty(
+        "--transition-fast",
+        e.target.checked ? "0.01ms" : "150ms ease-in-out"
+      );
+    });
+  document
+    .getElementById("lockManualPositionsToggle")
+    .addEventListener("change", (e) => {
+      state.ui.lockManualPositions = e.target.checked;
+      debouncedSave();
+    });
+  document.getElementById("loadDemoBtn").addEventListener("click", () => {
+    showConfirm(
+      "Load demo family?",
+      "This will replace your current data.",
+      () => {
+        loadDemoData();
+        renderTree();
+        closeAllModals();
+        showToast("Demo data loaded", "success");
+      }
+    );
   });
-  
-  document.getElementById("showCanvasGridToggle")?.addEventListener("change", (e) => {
-    const grid = document.getElementById("canvasGrid");
-    if (grid) {
-      grid.style.display = e.target.checked ? "block" : "none";
-    }
-  });
-  
-  document.getElementById("reduceMotionToggle")?.addEventListener("change", (e) => {
-    if (e.target.checked) {
-      document.body.classList.add("reduce-motion");
-    } else {
-      document.body.classList.remove("reduce-motion");
-    }
-  });
-  
-  // Link modal search
-  document.getElementById("linkSearchInput")?.addEventListener("input", (e) => {
-    filterLinkPersonList(e.target.value);
-  });
-  
-  // Click outside modal to close
-  window.addEventListener("click", (e) => {
-    if (e.target.classList.contains("modal-backdrop")) {
-      closeAllModals();
-    }
-  });
-  
-  // Keyboard shortcuts
-  document.addEventListener("keydown", handleKeyboardShortcuts);
-  
-  // Person form submit
-  document.getElementById("personForm").addEventListener("submit", handlePersonFormSubmit);
-  
-  // Mobile menu
-  document.getElementById("mobileMenuBtn")?.addEventListener("click", toggleMobileMenu);
-  
-  // SVG setup
+
+  // Confirm modal
+  document
+    .getElementById("confirmCancelBtn")
+    .addEventListener("click", closeAllModals);
+  document
+    .getElementById("confirmOkBtn")
+    .addEventListener("click", handleConfirmOk);
+
+  // Drawer
+  document
+    .getElementById("closeDrawerBtn")
+    .addEventListener("click", closeDrawer);
+
+  // SVG
   svgElement = document.getElementById("treeSvg");
   setupSVGInteractions();
+
+  // Update filters
+  updateCountryFilter();
+  updateCityFilter();
 }
 
-// ===== SVG INTERACTIONS =====
-function setupSVGInteractions() {
-  if (!svgElement) return;
-  
-  // Pan
-  svgElement.addEventListener("mousedown", handleSVGMouseDown);
-  svgElement.addEventListener("mousemove", handleSVGMouseMove);
-  svgElement.addEventListener("mouseup", handleSVGMouseUp);
-  svgElement.addEventListener("mouseleave", handleSVGMouseUp);
-  
-  // Zoom
-  svgElement.addEventListener("wheel", handleSVGWheel, { passive: false });
-  
-  // Touch support
-  svgElement.addEventListener("touchstart", handleTouchStart, { passive: false });
-  svgElement.addEventListener("touchmove", handleTouchMove, { passive: false });
-  svgElement.addEventListener("touchend", handleTouchEnd);
-  
-  // Click on canvas to deselect
-  svgElement.addEventListener("click", (e) => {
-    if (e.target === svgElement || e.target.closest("#treeGroup") === e.target) {
-      if (selectedPersonId) {
-        selectedPersonId = null;
-        closeDrawer();
-        renderTree();
+// ===== MODALS =====
+function openAddPersonModal(relationContext = null) {
+  const modal = document.getElementById("personModal");
+  const form = document.getElementById("personForm");
+  document.getElementById("personModalTitle").textContent = "Add Person";
+  form.reset();
+  document.getElementById("personId").value = "";
+  document.getElementById("personRelationContext").value =
+    relationContext || "";
+  closeAllModals();
+  modal.classList.remove("hidden");
+}
+
+function openSettingsModal() {
+  const modal = document.getElementById("settingsModal");
+  document.getElementById("hideOriginBadgesToggle").checked =
+    state.ui.hideOriginBadges;
+  document.getElementById("lockManualPositionsToggle").checked =
+    state.ui.lockManualPositions || false;
+  document.getElementById("showCanvasGridToggle").checked = document
+    .getElementById("canvasGrid")
+    .classList.contains("visible");
+  closeAllModals();
+  modal.classList.remove("hidden");
+}
+
+function openRelationshipModal(type, personId) {
+  currentRelationshipType = type;
+  const modal = document.getElementById("relationshipModal");
+  const titleMap = {
+    parent: "Add Parent",
+    child: "Add Child",
+    spouse: "Add Spouse",
+  };
+  document.getElementById("relationshipModalTitle").textContent =
+    titleMap[type] || "Add Relationship";
+
+  // Reset forms
+  document.getElementById("relationshipCreateForm").reset();
+  document.getElementById("relationshipLinkForm").reset();
+  document.getElementById("relLinkSearch").value = "";
+  document.getElementById("relationshipError").classList.add("hidden");
+
+  // Reset link form state
+  document.getElementById("relLinkSelectedId").value = "";
+  document.getElementById("relLinkPreview").classList.add("hidden");
+  document.getElementById("relLinkSubmitBtn").disabled = true;
+
+  // Populate link listbox
+  populateLinkPersonList(type, personId);
+
+  closeAllModals();
+  modal.classList.remove("hidden");
+
+  // Focus search input after modal opens
+  setTimeout(() => {
+    document.getElementById("relLinkSearch").focus();
+  }, 100);
+}
+
+function toggleFilterPanel() {
+  document.getElementById("filterPanel").classList.toggle("hidden");
+  document.getElementById("moreMenu").classList.add("hidden");
+}
+
+function toggleMoreMenu() {
+  document.getElementById("moreMenu").classList.toggle("hidden");
+  document.getElementById("filterPanel").classList.add("hidden");
+}
+
+function closeAllModals() {
+  document.querySelectorAll(".modal").forEach((m) => m.classList.add("hidden"));
+  document.getElementById("filterPanel").classList.add("hidden");
+  document.getElementById("moreMenu").classList.add("hidden");
+}
+
+// ===== HANDLERS =====
+function handlePersonFormSubmit(e) {
+  e.preventDefault();
+
+  const id = document.getElementById("personId").value || "p_" + Date.now();
+  const relationContext = document.getElementById(
+    "personRelationContext"
+  ).value;
+
+  const person = {
+    id,
+    name: document.getElementById("personName").value.trim(),
+    gender: document.getElementById("personGender").value,
+    birthYear: document.getElementById("personBirthYear").value,
+    deathYear: document.getElementById("personDeathYear").value,
+    tag: document.getElementById("personTag").value,
+    notes: document.getElementById("personNotes").value,
+    originCountry: document.getElementById("personOriginCountry").value,
+    originCity: document.getElementById("personOriginCity").value,
+    originArea: document.getElementById("personOriginArea").value,
+    originFamilyBranch: document.getElementById("personOriginFamilyBranch")
+      .value,
+    originNotes: document.getElementById("personOriginNotes").value,
+    x: (Math.random() - 0.5) * 800 + 400,
+    y: (Math.random() - 0.5) * 800 + 400,
+  };
+
+  const existingIndex = state.people.findIndex((p) => p.id === id);
+  if (existingIndex >= 0) {
+    state.people[existingIndex] = person;
+  } else {
+    state.people.push(person);
+  }
+
+  // Handle relationship context
+  if (relationContext) {
+    const [relType, selectedId] = relationContext.split(":");
+    addRelation(relType, selectedId, id);
+  }
+
+  saveData();
+  closeAllModals();
+  renderTree();
+  showToast("Saved", "success");
+}
+
+function handleRelationshipCreate(e) {
+  e.preventDefault();
+  const selectedId = selectedPersonId;
+  const name = document.getElementById("relNewName").value.trim();
+  const gender = document.getElementById("relNewGender").value;
+
+  const newPerson = {
+    id: "p_" + Date.now(),
+    name,
+    gender,
+    birthYear: "",
+    deathYear: "",
+    notes: "",
+    tag: "",
+    x: (Math.random() - 0.5) * 400 + 400,
+    y: (Math.random() - 0.5) * 400 + 400,
+    originCountry: "",
+    originCity: "",
+    originArea: "",
+    originFamilyBranch: "",
+    originNotes: "",
+  };
+
+  state.people.push(newPerson);
+  addRelation(currentRelationshipType, selectedId, newPerson.id);
+
+  saveData();
+  closeAllModals();
+  renderTree();
+  showToast("Relationship created", "success");
+}
+
+function handleRelationshipLink(e) {
+  e.preventDefault();
+  const linkedId = document.getElementById("relLinkSelectedId").value;
+  const selectedId = selectedPersonId;
+
+  if (!linkedId) {
+    showError("Please select a person");
+    return;
+  }
+
+  if (linkedId === selectedId) {
+    showError("Cannot link a person to themselves");
+    return;
+  }
+
+  addRelation(currentRelationshipType, selectedId, linkedId);
+  saveData();
+  closeAllModals();
+  renderTree();
+  showToast("Relationship linked", "success");
+}
+
+function addRelation(type, aId, bId) {
+  // Prevent duplicate relationships
+  if (
+    state.relations.some(
+      (r) =>
+        (r.aId === aId && r.bId === bId) ||
+        (r.aId === bId && r.bId === aId && r.type === type)
+    )
+  ) {
+    return;
+  }
+
+  let relationType, relAId, relBId;
+
+  if (type === "parent") {
+    relationType = "PARENT_CHILD";
+    relAId = bId;
+    relBId = aId;
+  } else if (type === "child") {
+    relationType = "PARENT_CHILD";
+    relAId = aId;
+    relBId = bId;
+  } else if (type === "spouse") {
+    relationType = "SPOUSE";
+    relAId = aId;
+    relBId = bId;
+  }
+
+  state.relations.push({
+    id: "r_" + Date.now(),
+    type: relationType,
+    aId: relAId,
+    bId: relBId,
+  });
+}
+
+function deleteSelectedPerson() {
+  showConfirm(
+    "Delete person?",
+    `${
+      state.people.find((p) => p.id === selectedPersonId)?.name || "Person"
+    } and all their relationships will be deleted.`,
+    () => {
+      state.people = state.people.filter((p) => p.id !== selectedPersonId);
+      state.relations = state.relations.filter(
+        (r) => r.aId !== selectedPersonId && r.bId !== selectedPersonId
+      );
+      saveData();
+      closeDrawer();
+      renderTree();
+      showToast("Person deleted", "success");
+    }
+  );
+}
+
+function showError(message) {
+  document.getElementById("relationshipError").textContent = message;
+  document.getElementById("relationshipError").classList.remove("hidden");
+}
+
+window.handleConfirmOk = function () {
+  if (window.confirmCallback) {
+    window.confirmCallback();
+  }
+  closeAllModals();
+};
+
+function showConfirm(title, message, callback) {
+  document.getElementById("confirmTitle").textContent = title;
+  document.getElementById("confirmMessage").textContent = message;
+  window.confirmCallback = callback;
+  closeAllModals();
+  document.getElementById("confirmModal").classList.remove("hidden");
+}
+
+// ===== AUTO ARRANGE LAYOUT ALGORITHM =====
+// Layout constants
+const LAYOUT = {
+  NODE_WIDTH: 140,
+  NODE_HEIGHT: 70,
+  H_GAP: 50, // Horizontal gap between sibling groups
+  V_GAP: 120, // Vertical gap between generations
+  SPOUSE_GAP: 20, // Gap between spouses
+  PADDING: 100, // Canvas padding
+};
+
+/**
+ * Main function to auto-arrange the tree - Top to Bottom layout
+ */
+function autoArrangeTree() {
+  if (state.people.length === 0) {
+    showToast("No people to arrange", "info");
+    return;
+  }
+
+  closeAllModals();
+
+  // Build the family graph structure
+  const graph = buildFamilyGraph();
+
+  // Find the true roots - people who have no parents AND whose spouse also has no parents
+  // OR people who have no parents and no spouse
+  const rootPeople = findTrueRoots(graph);
+
+  // Position all nodes using BFS from roots
+  const positioned = new Set();
+  let currentX = LAYOUT.PADDING;
+
+  rootPeople.forEach((rootId) => {
+    if (positioned.has(rootId)) return;
+
+    const width = positionSubtree(
+      graph,
+      rootId,
+      currentX,
+      LAYOUT.PADDING,
+      positioned
+    );
+    currentX += width + LAYOUT.H_GAP * 2;
+  });
+
+  // Handle any unpositioned people (disconnected nodes)
+  state.people.forEach((p) => {
+    if (!positioned.has(p.id)) {
+      p.x = currentX + LAYOUT.NODE_WIDTH / 2;
+      p.y = LAYOUT.PADDING;
+      p.hasManualPos = false;
+      positioned.add(p.id);
+      currentX += LAYOUT.NODE_WIDTH + LAYOUT.H_GAP;
+    }
+  });
+
+  // Render and fit
+  renderTree();
+  setTimeout(() => {
+    fitTreeToScreen();
+  }, 50);
+
+  debouncedSave();
+  showToast("Tree arranged", "success");
+}
+
+/**
+ * Find true root people - those at the top of the family tree
+ */
+function findTrueRoots(graph) {
+  const roots = [];
+  const visited = new Set();
+
+  // A true root is someone who:
+  // 1. Has no parents
+  // 2. Is not a spouse of someone who HAS parents (they would be placed with their spouse)
+
+  graph.nodes.forEach((node, id) => {
+    if (visited.has(id)) return;
+
+    const parents = graph.childOf.get(id) || [];
+
+    if (parents.length === 0) {
+      // Check if this person's spouse has parents
+      const spouses = graph.spouseOf.get(id) || [];
+      let spouseHasParents = false;
+
+      for (const spouseId of spouses) {
+        const spouseParents = graph.childOf.get(spouseId) || [];
+        if (spouseParents.length > 0) {
+          spouseHasParents = true;
+          break;
+        }
+      }
+
+      if (!spouseHasParents) {
+        // This is a true root
+        roots.push(id);
+        visited.add(id);
+        // Mark spouses as visited too (they'll be positioned together)
+        spouses.forEach((s) => visited.add(s));
       }
     }
   });
+
+  return roots;
 }
 
-function handleSVGMouseDown(e) {
-  if (e.target.closest(".node-group")) {
-    // Start dragging node
-    const nodeGroup = e.target.closest(".node-group");
-    const personId = nodeGroup.dataset.personId;
-    viewState.draggedNode = personId;
-    viewState.dragStartX = e.clientX;
-    viewState.dragStartY = e.clientY;
-  } else {
-    // Start panning
-    viewState.isDragging = true;
-    viewState.dragStartX = e.clientX;
-    viewState.dragStartY = e.clientY;
-  }
-}
+/**
+ * Position a person and all their descendants
+ * Returns the width used
+ */
+function positionSubtree(graph, personId, startX, y, positioned) {
+  if (positioned.has(personId)) return 0;
 
-function handleSVGMouseMove(e) {
-  if (viewState.draggedNode) {
-    // Drag node
-    const dx = (e.clientX - viewState.dragStartX) / viewState.scale;
-    const dy = (e.clientY - viewState.dragStartY) / viewState.scale;
-    
-    const person = state.people.find(p => p.id === viewState.draggedNode);
-    if (person) {
-      person.x += dx;
-      person.y += dy;
-      renderTree();
-      debouncedSave();
+  // Get all family members at this level (person + spouse(s))
+  const familyMembers = [personId];
+  const spouses = graph.spouseOf.get(personId) || [];
+  spouses.forEach((s) => {
+    if (!familyMembers.includes(s)) {
+      familyMembers.push(s);
     }
-    
-    viewState.dragStartX = e.clientX;
-    viewState.dragStartY = e.clientY;
-  } else if (viewState.isDragging) {
-    // Pan view
-    const dx = e.clientX - viewState.dragStartX;
-    const dy = e.clientY - viewState.dragStartY;
-    
-    viewState.offsetX += dx;
-    viewState.offsetY += dy;
-    viewState.dragStartX = e.clientX;
-    viewState.dragStartY = e.clientY;
-    
-    applyViewTransform();
+  });
+
+  // Get all children of this family
+  const allChildren = [];
+  familyMembers.forEach((memberId) => {
+    const children = graph.parentOf.get(memberId) || [];
+    children.forEach((childId) => {
+      if (!allChildren.includes(childId) && !positioned.has(childId)) {
+        allChildren.push(childId);
+      }
+    });
+  });
+
+  // Calculate widths for all child subtrees first
+  const childWidths = [];
+  let totalChildrenWidth = 0;
+
+  allChildren.forEach((childId, idx) => {
+    const childWidth = calculateSubtreeWidth(
+      graph,
+      childId,
+      new Set(positioned)
+    );
+    childWidths.push({ childId, width: childWidth });
+    totalChildrenWidth += childWidth;
+    if (idx < allChildren.length - 1) {
+      totalChildrenWidth += LAYOUT.H_GAP;
+    }
+  });
+
+  // Calculate parent family width
+  const parentWidth =
+    familyMembers.length * LAYOUT.NODE_WIDTH +
+    (familyMembers.length - 1) * LAYOUT.SPOUSE_GAP;
+
+  // The family unit needs at least as much space as its children
+  const familyWidth = Math.max(parentWidth, totalChildrenWidth);
+
+  // Position the parent(s) centered above their children
+  const parentCenterX = startX + familyWidth / 2;
+  const parentStartX = parentCenterX - parentWidth / 2;
+
+  familyMembers.forEach((memberId, idx) => {
+    const person = state.people.find((p) => p.id === memberId);
+    if (person) {
+      person.x =
+        parentStartX +
+        idx * (LAYOUT.NODE_WIDTH + LAYOUT.SPOUSE_GAP) +
+        LAYOUT.NODE_WIDTH / 2;
+      person.y = y;
+      person.hasManualPos = false;
+      positioned.add(memberId);
+    }
+  });
+
+  // Now position children
+  if (allChildren.length > 0) {
+    const childY = y + LAYOUT.V_GAP;
+    let childStartX = parentCenterX - totalChildrenWidth / 2;
+
+    childWidths.forEach(({ childId, width }) => {
+      positionSubtree(graph, childId, childStartX, childY, positioned);
+      childStartX += width + LAYOUT.H_GAP;
+    });
   }
+
+  return familyWidth;
 }
 
-function handleSVGMouseUp() {
-  viewState.isDragging = false;
-  viewState.draggedNode = null;
-}
+/**
+ * Calculate the width needed for a person's subtree
+ */
+function calculateSubtreeWidth(graph, personId, positioned) {
+  if (positioned.has(personId)) return 0;
 
-function handleSVGWheel(e) {
-  e.preventDefault();
-  
-  const delta = e.deltaY > 0 ? 0.9 : 1.1;
-  const newScale = Math.max(0.1, Math.min(5, viewState.scale * delta));
-  
-  // Zoom towards mouse position
-  const svg = document.getElementById("treeSvg");
-  if (!svg) return;
-  
-  const rect = svg.getBoundingClientRect();
-  const mouseX = e.clientX - rect.left;
-  const mouseY = e.clientY - rect.top;
-  
-  viewState.offsetX = mouseX - (mouseX - viewState.offsetX) * (newScale / viewState.scale);
-  viewState.offsetY = mouseY - (mouseY - viewState.offsetY) * (newScale / viewState.scale);
-  viewState.scale = newScale;
-  
-  applyViewTransform();
-}
+  // Get family members
+  const familyMembers = [personId];
+  const spouses = graph.spouseOf.get(personId) || [];
+  spouses.forEach((s) => {
+    if (!familyMembers.includes(s) && !positioned.has(s)) {
+      familyMembers.push(s);
+    }
+  });
 
-let touchStartDistance = 0;
-let touchStartScale = 1;
+  // Get all children
+  const allChildren = [];
+  familyMembers.forEach((memberId) => {
+    const children = graph.parentOf.get(memberId) || [];
+    children.forEach((childId) => {
+      if (!allChildren.includes(childId) && !positioned.has(childId)) {
+        allChildren.push(childId);
+      }
+    });
+  });
 
-function handleTouchStart(e) {
-  if (e.touches.length === 2) {
-    e.preventDefault();
-    const dx = e.touches[0].clientX - e.touches[1].clientX;
-    const dy = e.touches[0].clientY - e.touches[1].clientY;
-    touchStartDistance = Math.sqrt(dx * dx + dy * dy);
-    touchStartScale = viewState.scale;
-  } else if (e.touches.length === 1) {
-    viewState.dragStartX = e.touches[0].clientX;
-    viewState.dragStartY = e.touches[0].clientY;
-    viewState.isDragging = true;
+  // Calculate children total width
+  let childrenWidth = 0;
+  const tempPositioned = new Set(positioned);
+  familyMembers.forEach((m) => tempPositioned.add(m));
+
+  if (allChildren.length > 0) {
+    allChildren.forEach((childId, idx) => {
+      childrenWidth += calculateSubtreeWidth(graph, childId, tempPositioned);
+      tempPositioned.add(childId);
+      if (idx < allChildren.length - 1) {
+        childrenWidth += LAYOUT.H_GAP;
+      }
+    });
   }
+
+  // Parent width
+  const parentWidth =
+    familyMembers.length * LAYOUT.NODE_WIDTH +
+    (familyMembers.length - 1) * LAYOUT.SPOUSE_GAP;
+
+  return Math.max(parentWidth, childrenWidth);
 }
 
-function handleTouchMove(e) {
-  if (e.touches.length === 2) {
-    e.preventDefault();
-    const dx = e.touches[0].clientX - e.touches[1].clientX;
-    const dy = e.touches[0].clientY - e.touches[1].clientY;
-    const distance = Math.sqrt(dx * dx + dy * dy);
-    
-    const newScale = Math.max(0.1, Math.min(5, touchStartScale * (distance / touchStartDistance)));
-    viewState.scale = newScale;
-    applyViewTransform();
-  } else if (e.touches.length === 1 && viewState.isDragging) {
-    e.preventDefault();
-    const dx = e.touches[0].clientX - viewState.dragStartX;
-    const dy = e.touches[0].clientY - viewState.dragStartY;
-    
-    viewState.offsetX += dx;
-    viewState.offsetY += dy;
-    viewState.dragStartX = e.touches[0].clientX;
-    viewState.dragStartY = e.touches[0].clientY;
-    
-    applyViewTransform();
+/**
+ * Find root families (couples/individuals with no parents)
+ * @deprecated Use findTrueRoots instead
+ */
+function findRootFamilies(graph) {
+  const families = [];
+  const processed = new Set();
+
+  // Find all people with no parents
+  graph.nodes.forEach((node, id) => {
+    if (processed.has(id)) return;
+
+    const parents = graph.childOf.get(id) || [];
+    if (parents.length === 0) {
+      // This is a root person
+      const coupleId = graph.coupleOf.get(id);
+      if (coupleId) {
+        // Add the whole couple as a family unit
+        const couple = graph.couples.find((c) => c.id === coupleId);
+        if (couple) {
+          families.push({ type: "couple", members: [...couple.members] });
+          couple.members.forEach((m) => processed.add(m));
+        }
+      } else {
+        families.push({ type: "single", members: [id] });
+        processed.add(id);
+      }
+    }
+  });
+
+  return families;
+}
+
+/**
+ * Layout a family unit and its descendants recursively
+ * @deprecated Use positionSubtree instead
+ */
+function layoutFamily(graph, family, startX, y, level) {
+  const members = family.members;
+
+  // Get all children of this family
+  const allChildren = [];
+  members.forEach((memberId) => {
+    const children = graph.parentOf.get(memberId) || [];
+    children.forEach((childId) => {
+      if (!allChildren.includes(childId)) {
+        allChildren.push(childId);
+      }
+    });
+  });
+
+  // Group children into family units (with their spouses)
+  const childFamilies = [];
+  const processedChildren = new Set();
+
+  allChildren.forEach((childId) => {
+    if (processedChildren.has(childId)) return;
+
+    const coupleId = graph.coupleOf.get(childId);
+    if (coupleId) {
+      const couple = graph.couples.find((c) => c.id === coupleId);
+      if (couple) {
+        // Only include children that are actually children of this family
+        const familyMembers = couple.members.filter(
+          (m) =>
+            allChildren.includes(m) ||
+            graph.spouseOf.get(m)?.some((s) => allChildren.includes(s))
+        );
+        if (familyMembers.length > 0) {
+          childFamilies.push({ type: "couple", members: couple.members });
+          couple.members.forEach((m) => processedChildren.add(m));
+        }
+      }
+    } else {
+      childFamilies.push({ type: "single", members: [childId] });
+      processedChildren.add(childId);
+    }
+  });
+
+  // First, recursively layout all child families to get their widths
+  let totalChildrenWidth = 0;
+  const childWidths = [];
+
+  if (childFamilies.length > 0) {
+    childFamilies.forEach((childFamily, idx) => {
+      const childWidth = getSubtreeWidth(graph, childFamily);
+      childWidths.push(childWidth);
+      totalChildrenWidth += childWidth;
+      if (idx < childFamilies.length - 1) {
+        totalChildrenWidth += LAYOUT.H_GAP;
+      }
+    });
+  }
+
+  // Calculate parent family width
+  const parentWidth =
+    members.length * LAYOUT.NODE_WIDTH +
+    (members.length - 1) * LAYOUT.SPOUSE_GAP;
+
+  // The family unit needs at least as much space as its children
+  const familyWidth = Math.max(parentWidth, totalChildrenWidth);
+
+  // Position the parent(s) centered above their children
+  const parentCenterX = startX + familyWidth / 2;
+  const parentStartX = parentCenterX - parentWidth / 2;
+
+  members.forEach((memberId, idx) => {
+    const node = graph.nodes.get(memberId);
+    if (node && (!node.locked || !state.ui.lockManualPositions)) {
+      node.x =
+        parentStartX +
+        idx * (LAYOUT.NODE_WIDTH + LAYOUT.SPOUSE_GAP) +
+        LAYOUT.NODE_WIDTH / 2;
+      node.y = y;
+      node.person.x = node.x;
+      node.person.y = node.y;
+      node.person.hasManualPos = false;
+      node.level = level;
+    }
+  });
+
+  // Now position child families
+  if (childFamilies.length > 0) {
+    const childY = y + LAYOUT.V_GAP;
+    let childStartX = parentCenterX - totalChildrenWidth / 2;
+
+    childFamilies.forEach((childFamily, idx) => {
+      layoutFamily(graph, childFamily, childStartX, childY, level + 1);
+      childStartX += childWidths[idx] + LAYOUT.H_GAP;
+    });
+  }
+
+  return familyWidth;
+}
+
+/**
+ * Calculate the width needed for a family subtree
+ */
+function getSubtreeWidth(graph, family) {
+  const members = family.members;
+
+  // Get all children
+  const allChildren = [];
+  members.forEach((memberId) => {
+    const children = graph.parentOf.get(memberId) || [];
+    children.forEach((childId) => {
+      if (!allChildren.includes(childId)) {
+        allChildren.push(childId);
+      }
+    });
+  });
+
+  // Group children into families
+  const childFamilies = [];
+  const processedChildren = new Set();
+
+  allChildren.forEach((childId) => {
+    if (processedChildren.has(childId)) return;
+
+    const coupleId = graph.coupleOf.get(childId);
+    if (coupleId) {
+      const couple = graph.couples.find((c) => c.id === coupleId);
+      if (couple) {
+        childFamilies.push({ type: "couple", members: couple.members });
+        couple.members.forEach((m) => processedChildren.add(m));
+      }
+    } else {
+      childFamilies.push({ type: "single", members: [childId] });
+      processedChildren.add(childId);
+    }
+  });
+
+  // Calculate children total width
+  let childrenWidth = 0;
+  if (childFamilies.length > 0) {
+    childFamilies.forEach((childFamily, idx) => {
+      childrenWidth += getSubtreeWidth(graph, childFamily);
+      if (idx < childFamilies.length - 1) {
+        childrenWidth += LAYOUT.H_GAP;
+      }
+    });
+  }
+
+  // Parent width
+  const parentWidth =
+    members.length * LAYOUT.NODE_WIDTH +
+    (members.length - 1) * LAYOUT.SPOUSE_GAP;
+
+  return Math.max(parentWidth, childrenWidth);
+}
+
+/**
+ * Center the entire tree in the canvas
+ */
+function centerTree() {
+  if (state.people.length === 0) return;
+
+  // Find bounds
+  let minX = Infinity,
+    maxX = -Infinity;
+  state.people.forEach((p) => {
+    if (p.x !== undefined) {
+      minX = Math.min(minX, p.x - LAYOUT.NODE_WIDTH / 2);
+      maxX = Math.max(maxX, p.x + LAYOUT.NODE_WIDTH / 2);
+    }
+  });
+
+  // Shift everything to start from PADDING
+  const shift = LAYOUT.PADDING - minX;
+  state.people.forEach((p) => {
+    if (p.x !== undefined) {
+      p.x += shift;
+    }
+  });
+}
+
+/**
+ * Build graph structure from relations
+ */
+function buildFamilyGraph() {
+  const graph = {
+    nodes: new Map(), // personId -> node info
+    parentOf: new Map(), // personId -> [childIds]
+    childOf: new Map(), // personId -> [parentIds]
+    spouseOf: new Map(), // personId -> [spouseIds]
+    couples: [], // [{id, members: [id, id]}]
+    coupleOf: new Map(), // personId -> coupleId
+  };
+
+  // Initialize nodes
+  state.people.forEach((p) => {
+    graph.nodes.set(p.id, {
+      id: p.id,
+      person: p,
+      level: -1,
+      x: 0,
+      y: 0,
+      width: LAYOUT.NODE_WIDTH,
+      subtreeWidth: LAYOUT.NODE_WIDTH,
+      locked: p.hasManualPos && state.ui.lockManualPositions,
+    });
+    graph.parentOf.set(p.id, []);
+    graph.childOf.set(p.id, []);
+    graph.spouseOf.set(p.id, []);
+  });
+
+  // Process relations
+  state.relations.forEach((rel) => {
+    if (rel.type === "PARENT_CHILD") {
+      // aId is parent, bId is child
+      if (graph.nodes.has(rel.aId) && graph.nodes.has(rel.bId)) {
+        graph.parentOf.get(rel.aId).push(rel.bId);
+        graph.childOf.get(rel.bId).push(rel.aId);
+      }
+    } else if (rel.type === "SPOUSE") {
+      if (graph.nodes.has(rel.aId) && graph.nodes.has(rel.bId)) {
+        graph.spouseOf.get(rel.aId).push(rel.bId);
+        graph.spouseOf.get(rel.bId).push(rel.aId);
+      }
+    }
+  });
+
+  // Build couple groups
+  const processedSpouses = new Set();
+  state.people.forEach((p) => {
+    if (processedSpouses.has(p.id)) return;
+
+    const spouses = graph.spouseOf.get(p.id);
+    if (spouses && spouses.length > 0) {
+      // Create a couple group
+      const coupleId = `couple_${p.id}`;
+      const members = [p.id, ...spouses];
+      graph.couples.push({ id: coupleId, members });
+      members.forEach((m) => {
+        graph.coupleOf.set(m, coupleId);
+        processedSpouses.add(m);
+      });
+    }
+  });
+
+  return graph;
+}
+
+// ===== RENDERING =====
 function renderTree() {
   const filteredPeople = getFilteredPeople();
-  
+
   if (filteredPeople.length === 0) {
-    showEmptyState();
+    document.getElementById("emptyState").classList.remove("hidden");
+    svgElement.innerHTML = "";
     return;
   }
-  
-  hideEmptyState();
-  
-  // Get or create SVG
-  let svg = document.getElementById("treeSvg");
-  if (!svg) {
-    const container = document.getElementById("treeContainer");
-    svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    svg.setAttribute("id", "treeSvg");
-    svg.setAttribute("width", "100%");
-    svg.setAttribute("height", "100%");
-    container.appendChild(svg);
-  }
-  
-  // Clear and rebuild groups
-  svg.innerHTML = `
+
+  document.getElementById("emptyState").classList.add("hidden");
+
+  svgElement.innerHTML = `
     <defs>
-      <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
-        <polygon points="0 0, 10 3, 0 6" fill="#94a3b8" />
-      </marker>
-      <filter id="nodeShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <filter id="nodeShadow" x="-50%" y="-50%" width="200%" height="200%">
         <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.1"/>
       </filter>
-      <filter id="nodeSelectedShadow" x="-20%" y="-20%" width="140%" height="140%">
-        <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#2c5f2d" flood-opacity="0.25"/>
+      <filter id="nodeSelectedShadow" x="-50%" y="-50%" width="200%" height="200%">
+        <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#2c5f2d" flood-opacity="0.3"/>
       </filter>
     </defs>
   `;
-  
-  // Create main tree group
-  const treeGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
-  treeGroup.setAttribute("id", "treeGroup");
-  
-  // Create sub-groups
-  const edgesGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
-  edgesGroup.setAttribute("id", "edgesGroup");
-  const nodesGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
-  nodesGroup.setAttribute("id", "nodesGroup");
-  
-  // Render edges first (so they're behind nodes)
+
+  const edgesGroup = document.createElementNS(
+    "http://www.w3.org/2000/svg",
+    "g"
+  );
+  const nodesGroup = document.createElementNS(
+    "http://www.w3.org/2000/svg",
+    "g"
+  );
+
   renderEdges(edgesGroup, filteredPeople);
-  
-  // Render nodes
   renderNodes(nodesGroup, filteredPeople);
-  
-  treeGroup.appendChild(edgesGroup);
-  treeGroup.appendChild(nodesGroup);
-  svg.appendChild(treeGroup);
-  
-  // Apply current transform
+
+  svgElement.appendChild(edgesGroup);
+  svgElement.appendChild(nodesGroup);
+
   applyViewTransform();
-} container.innerHTML = "";
-  
-  // Create SVG group
-  const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
-  g.setAttribute("id", "treeGroup");
-  
-  // Render edges first (so they're behind nodes)
-  renderEdges(g, filteredPeople);
-  
-  // Render nodes
-  renderNodes(g, filteredPeople);
-  
-  container.appendChild(g);
 }
 
 function getFilteredPeople() {
   let filtered = state.people;
-  
-  // Apply search filter
+
   if (searchQuery) {
-    filtered = filtered.filter(p => {
-      const searchFields = [
+    filtered = filtered.filter((p) => {
+      const fields = [
         p.name,
         p.tag,
         p.originCountry,
         p.originCity,
         p.originArea,
-        p.originFamilyBranch
-      ].map(f => (f || "").toLowerCase());
-      
-      return searchFields.some(field => field.includes(searchQuery));
+        p.originFamilyBranch,
+      ].map((f) => (f || "").toLowerCase());
+      return fields.some((f) => f.includes(searchQuery));
     });
   }
-  
-  // Apply country filter
+
   if (state.ui.filterCountry !== "All") {
-    filtered = filtered.filter(p => p.originCountry === state.ui.filterCountry);
+    filtered = filtered.filter(
+      (p) => p.originCountry === state.ui.filterCountry
+    );
   }
-  
-  // Apply city filter
+
   if (state.ui.filterCity !== "All") {
-    filtered = filtered.filter(p => p.originCity === state.ui.filterCity);
+    filtered = filtered.filter((p) => p.originCity === state.ui.filterCity);
   }
-  
+
   return filtered;
 }
 
 function renderEdges(g, filteredPeople) {
-  const filteredIds = new Set(filteredPeople.map(p => p.id));
-  
-  state.relations.forEach(rel => {
-    // Only render edge if both people are visible
+  const filteredIds = new Set(filteredPeople.map((p) => p.id));
+
+  state.relations.forEach((rel) => {
     if (!filteredIds.has(rel.aId) || !filteredIds.has(rel.bId)) return;
-    
-    const personA = state.people.find(p => p.id === rel.aId);
-    const personB = state.people.find(p => p.id === rel.bId);
-    
-    if (!personA || !personB) return;
-    
-    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-    line.setAttribute("x1", personA.x);
-    line.setAttribute("y1", personA.y);
-    line.setAttribute("x2", personB.x);
-    line.setAttribute("y2", personB.y);
-    line.classList.add("edge");
-    
+
+    const pA = state.people.find((p) => p.id === rel.aId);
+    const pB = state.people.find((p) => p.id === rel.bId);
+    if (!pA || !pB) return;
+
+    // Create curved path for better visualization
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+
+    const x1 = pA.x;
+    const y1 = pA.y;
+    const x2 = pB.x;
+    const y2 = pB.y;
+
+    // Calculate control points for bezier curve
+    const midY = (y1 + y2) / 2;
+    const dx = Math.abs(x2 - x1);
+    const dy = Math.abs(y2 - y1);
+
+    let d;
     if (rel.type === "SPOUSE") {
-      line.classList.add("spouse-edge");
+      // Horizontal curve for spouse relationships
+      const curveOffset = Math.min(30, dy / 2);
+      d = `M ${x1} ${y1} Q ${(x1 + x2) / 2} ${
+        Math.min(y1, y2) - curveOffset
+      } ${x2} ${y2}`;
     } else {
-      line.classList.add("parent-child-edge");
+      // Vertical curve for parent-child relationships
+      const controlY1 = y1 + (y2 - y1) * 0.4;
+      const controlY2 = y1 + (y2 - y1) * 0.6;
+      d = `M ${x1} ${y1} C ${x1} ${controlY1} ${x2} ${controlY2} ${x2} ${y2}`;
     }
-    
-    g.appendChild(line);
+
+    path.setAttribute("d", d);
+    path.classList.add(
+      "edge",
+      rel.type === "SPOUSE" ? "spouse-edge" : "parent-child-edge"
+    );
+    path.dataset.relationId = rel.id;
+
+    g.appendChild(path);
   });
 }
 
 function renderNodes(g, filteredPeople) {
-  filteredPeople.forEach(person => {
-    const nodeGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
-    nodeGroup.classList.add("node-group");
-    nodeGroup.dataset.personId = person.id;
-    
-    // Highlight if selected or matches search
-    const isSelected = person.id === selectedPersonId;
-    const matchesSearch = searchQuery && (
-      person.name.toLowerCase().includes(searchQuery) ||
-      (person.tag || "").toLowerCase().includes(searchQuery) ||
-      (person.originCountry || "").toLowerCase().includes(searchQuery) ||
-      (person.originCity || "").toLowerCase().includes(searchQuery) ||
-      (person.originArea || "").toLowerCase().includes(searchQuery) ||
-      (person.originFamilyBranch || "").toLowerCase().includes(searchQuery)
-    );
-    
-    if (isSelected) {
-      nodeGroup.classList.add("selected");
+  filteredPeople.forEach((person) => {
+    const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    group.classList.add("node-group", "node");
+    group.dataset.personId = person.id;
+
+    if (person.id === selectedPersonId) {
+      group.classList.add("selected");
     }
-    if (matchesSearch) {
-      nodeGroup.classList.add("search-match");
-    }
-    
-    // Node rectangle
+
     const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
     rect.setAttribute("x", person.x - 60);
     rect.setAttribute("y", person.y - 35);
     rect.setAttribute("width", "120");
     rect.setAttribute("height", "70");
     rect.setAttribute("rx", "8");
-    rect.classList.add("node");
-    
-    // Gender styling
-    if (person.gender === "Male") {
-      rect.classList.add("node-male");
-    } else if (person.gender === "Female") {
-      rect.classList.add("node-female");
+    rect.classList.add(
+      "node-rect",
+      person.gender === "Male"
+        ? "node-male"
+        : person.gender === "Female"
+        ? "node-female"
+        : ""
+    );
+
+    const name = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    name.setAttribute("x", person.x);
+    name.setAttribute("y", person.y - 5);
+    name.setAttribute("text-anchor", "middle");
+    name.classList.add("node-name");
+    name.textContent = (person.name || "").substring(0, 15);
+
+    const years = document.createElementNS(
+      "http://www.w3.org/2000/svg",
+      "text"
+    );
+    years.setAttribute("x", person.x);
+    years.setAttribute("y", person.y + 10);
+    years.setAttribute("text-anchor", "middle");
+    years.classList.add("node-years");
+    years.textContent = person.birthYear
+      ? `${person.birthYear}${person.deathYear ? `-${person.deathYear}` : ""}`
+      : "";
+
+    group.appendChild(rect);
+    group.appendChild(name);
+    group.appendChild(years);
+
+    if (
+      !state.ui.hideOriginBadges &&
+      (person.originCity || person.originCountry)
+    ) {
+      const origin = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "text"
+      );
+      origin.setAttribute("x", person.x);
+      origin.setAttribute("y", person.y + 25);
+      origin.setAttribute("text-anchor", "middle");
+      origin.classList.add("node-origin");
+      origin.textContent = (
+        person.originCity ||
+        person.originCountry ||
+        ""
+      ).substring(0, 12);
+      group.appendChild(origin);
     }
-    
-    nodeGroup.appendChild(rect);
-    
-    // Name text
-    const nameText = document.createElementNS("http://www.w3.org/2000/svg", "text");
-    nameText.setAttribute("x", person.x);
-    nameText.setAttribute("y", person.y - 5);
-    nameText.setAttribute("text-anchor", "middle");
-    nameText.classList.add("node-name");
-    nameText.textContent = truncateText(person.name, 15);
-    nodeGroup.appendChild(nameText);
-    
-    // Years text
-    const yearsText = document.createElementNS("http://www.w3.org/2000/svg", "text");
-    yearsText.setAttribute("x", person.x);
-    yearsText.setAttribute("y", person.y + 10);
-    yearsText.setAttribute("text-anchor", "middle");
-    yearsText.classList.add("node-years");
-    const years = person.birthYear ? `${person.birthYear}${person.deathYear ? `-${person.deathYear}` : ""}` : "";
-    yearsText.textContent = years;
-    nodeGroup.appendChild(yearsText);
-    
-    // Origin badge (if not hidden)
-    if (!state.ui.hideOriginBadges) {
-      const originText = person.originCity || person.originCountry;
-      if (originText) {
-        const badge = document.createElementNS("http://www.w3.org/2000/svg", "text");
-        badge.setAttribute("x", person.x);
-        badge.setAttribute("y", person.y + 25);
-        badge.setAttribute("text-anchor", "middle");
-        badge.classList.add("node-origin");
-        badge.textContent = truncateText(originText, 12);
-        nodeGroup.appendChild(badge);
-      }
-    }
-    
-    // Click handler
-    nodeGroup.addEventListener("click", (e) => {
+
+    // Node mousedown for dragging
+    group.addEventListener("mousedown", (e) => {
       e.stopPropagation();
-      selectPerson(person.id);
+      viewState.draggedNode = person.id;
+      viewState.nodeDragStartX = e.clientX;
+      viewState.nodeDragStartY = e.clientY;
+      viewState.nodeMoved = false;
+      group.classList.add("dragging");
     });
-    
-    g.appendChild(nodeGroup);
+
+    group.addEventListener("click", (e) => {
+      e.stopPropagation();
+      // Only select if not moved during drag
+      if (!viewState.nodeMoved) {
+        selectPerson(person.id);
+      }
+      viewState.nodeMoved = false;
+    });
+
+    g.appendChild(group);
   });
 }
 
-function truncateText(text, maxLength) {
-  if (!text) return "";
-  return text.length > maxLength ? text.substring(0, maxLength) + "..." : text;
-}
-
-function showEmptyState() {
-  document.getElementById("emptyState").style.display = "flex";
-}
-
-function hideEmptyState() {
-  document.getElementById("emptyState").style.display = "none";
-}
-
-// ===== PERSON SELECTION =====
 function selectPerson(personId) {
   selectedPersonId = personId;
   renderTree();
@@ -740,878 +1919,658 @@ function closeDrawer() {
 }
 
 function updateDrawer() {
-  const person = state.people.find(p => p.id === selectedPersonId);
+  const person = state.people.find((p) => p.id === selectedPersonId);
   if (!person) return;
-  
-  const drawerContent = document.getElementById("drawerContent");
-  if (!drawerContent) return;
-  
-  // Build drawer HTML
-  drawerContent.innerHTML = `
-    <div class="person-info">
-      <div class="person-header">
-        <h3 id="drawerName">${escapeHtml(person.name)}</h3>
-        <div class="person-meta">
-          ${person.gender ? `<span class="meta-badge">${escapeHtml(person.gender)}</span>` : ''}
-          ${person.tag ? `<span class="meta-badge meta-tag">${escapeHtml(person.tag)}</span>` : ''}
-        </div>
-      </div>
-      
-      <div class="info-section">
-        <h4>Basic Information</h4>
-        <div class="info-grid">
-          <div class="info-item">
-            <span class="info-label">Birth Year:</span>
-            <span id="drawerBirth">${escapeHtml(person.birthYear) || 'Not specified'}</span>
-          </div>
-          <div class="info-item">
-            <span class="info-label">Death Year:</span>
-            <span id="drawerDeath">${escapeHtml(person.deathYear) || 'Not specified'}</span>
-          </div>
-        </div>
-        ${person.notes ? `<div class="info-item"><span class="info-label">Notes:</span><p id="drawerNotes">${escapeHtml(person.notes)}</p></div>` : ''}
-      </div>
-      
-      ${person.originCountry || person.originCity ? `
-      <div class="info-section">
-        <h4>Origin / Roots</h4>
-        <div class="info-grid">
-          ${person.originCountry ? `<div class="info-item"><span class="info-label">Country:</span><span id="drawerOriginCountry">${escapeHtml(person.originCountry)}</span></div>` : ''}
-          ${person.originCity ? `<div class="info-item"><span class="info-label">City:</span><span id="drawerOriginCity">${escapeHtml(person.originCity)}</span></div>` : ''}
-          ${person.originArea ? `<div class="info-item"><span class="info-label">Area:</span><span id="drawerOriginArea">${escapeHtml(person.originArea)}</span></div>` : ''}
-          ${person.originFamilyBranch ? `<div class="info-item"><span class="info-label">Family Branch:</span><span id="drawerOriginBranch">${escapeHtml(person.originFamilyBranch)}</span></div>` : ''}
-        </div>
-        ${person.originNotes ? `<div class="info-item"><span class="info-label">Origin Notes:</span><p id="drawerOriginNotes">${escapeHtml(person.originNotes)}</p></div>` : ''}
-      </div>
-      ` : ''}
-      
-      <div class="info-section">
-        <h4>Relationships</h4>
-        <div id="relationshipsList"></div>
+
+  document.getElementById("drawerTitle").textContent = person.name;
+
+  let html = `
+    <div class="person-card">
+      <div class="person-name">${escapeHtml(person.name)}</div>
+      <div class="person-meta">
+        ${person.gender ? `<span class="badge">${person.gender}</span>` : ""}
+        ${
+          person.tag
+            ? `<span class="badge">${escapeHtml(person.tag)}</span>`
+            : ""
+        }
       </div>
     </div>
-    
-    <div class="drawer-actions">
-      <button id="editPersonBtn" class="btn btn-primary btn-full">
-        <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
-        Edit Person
-      </button>
-      <button id="deletePersonBtn" class="btn btn-danger btn-full">
-        <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
-        Delete Person
-      </button>
-      <div class="action-divider"></div>
-      <button id="addParentBtn" class="btn btn-ghost btn-full">
-        <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-        Add Parent
-      </button>
-      <button id="addChildBtn" class="btn btn-ghost btn-full">
-        <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-        Add Child
-      </button>
-      <button id="addSpouseBtn" class="btn btn-ghost btn-full">
-        <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-        Add Spouse
-      </button>
-      <button id="linkExistingBtn" class="btn btn-ghost btn-full">
-        <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></svg>
-        Link to Existing
-      </button>
-      <button id="focusPersonBtn" class="btn btn-ghost btn-full">
-        <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M12 8c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4zm8.94 3c-.46-4.17-3.77-7.48-7.94-7.94V1h-2v2.06C6.83 3.52 3.52 6.83 3.06 11H1v2h2.06c.46 4.17 3.77 7.48 7.94 7.94V23h2v-2.06c4.17-.46 7.48-3.77 7.94-7.94H23v-2h-2.06zM12 19c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z"/></svg>
-        Focus on Person
-      </button>
+
+    <div class="info-section">
+      <h3>Details</h3>
+      <div class="info-item">
+        <span class="info-label">Birth:</span>
+        <span class="info-value">${person.birthYear || "—"}</span>
+      </div>
+      ${
+        person.deathYear
+          ? `
+      <div class="info-item">
+        <span class="info-label">Death:</span>
+        <span class="info-value">${person.deathYear}</span>
+      </div>
+      `
+          : ""
+      }
+      ${
+        person.notes
+          ? `
+      <div class="info-item">
+        <span class="info-label">Notes:</span>
+        <span class="info-value">${escapeHtml(person.notes)}</span>
+      </div>
+      `
+          : ""
+      }
     </div>
   `;
-  
-  // Re-attach event listeners for drawer buttons
-  document.getElementById("editPersonBtn")?.addEventListener("click", editSelectedPerson);
-  document.getElementById("deletePersonBtn")?.addEventListener("click", deleteSelectedPerson);
-  document.getElementById("addParentBtn")?.addEventListener("click", () => addRelatedPerson("parent"));
-  document.getElementById("addChildBtn")?.addEventListener("click", () => addRelatedPerson("child"));
-  document.getElementById("addSpouseBtn")?.addEventListener("click", () => addRelatedPerson("spouse"));
-  document.getElementById("linkExistingBtn")?.addEventListener("click", openLinkExistingModal);
-  document.getElementById("focusPersonBtn")?.addEventListener("click", focusOnPerson);
-  
+
+  if (person.originCountry || person.originCity) {
+    html += `
+      <div class="info-section">
+        <h3>Origin</h3>
+        ${
+          person.originCountry
+            ? `<div class="info-item"><span class="info-label">Country:</span><span class="info-value">${escapeHtml(
+                person.originCountry
+              )}</span></div>`
+            : ""
+        }
+        ${
+          person.originCity
+            ? `<div class="info-item"><span class="info-label">City:</span><span class="info-value">${escapeHtml(
+                person.originCity
+              )}</span></div>`
+            : ""
+        }
+        ${
+          person.originArea
+            ? `<div class="info-item"><span class="info-label">Area:</span><span class="info-value">${escapeHtml(
+                person.originArea
+              )}</span></div>`
+            : ""
+        }
+        ${
+          person.originFamilyBranch
+            ? `<div class="info-item"><span class="info-label">Branch:</span><span class="info-value">${escapeHtml(
+                person.originFamilyBranch
+              )}</span></div>`
+            : ""
+        }
+      </div>
+    `;
+  }
+
   // Relationships
-  updateRelationshipsList(person);
+  const parentRels = state.relations
+    .filter((r) => r.type === "PARENT_CHILD" && r.bId === person.id)
+    .map((r) => state.people.find((p) => p.id === r.aId))
+    .filter(Boolean);
+  const spouseRels = state.relations
+    .filter(
+      (r) => r.type === "SPOUSE" && (r.aId === person.id || r.bId === person.id)
+    )
+    .map((r) => {
+      const id = r.aId === person.id ? r.bId : r.aId;
+      return state.people.find((p) => p.id === id);
+    })
+    .filter(Boolean);
+  const childRels = state.relations
+    .filter((r) => r.type === "PARENT_CHILD" && r.aId === person.id)
+    .map((r) => state.people.find((p) => p.id === r.bId))
+    .filter(Boolean);
+
+  if (parentRels.length > 0 || spouseRels.length > 0 || childRels.length > 0) {
+    html += `<div class="info-section"><h3>Relationships</h3>`;
+    if (parentRels.length > 0) {
+      html += `<div class="info-item"><span class="info-label">Parents:</span><span class="info-value">${parentRels
+        .map((p) => escapeHtml(p.name))
+        .join(", ")}</span></div>`;
+    }
+    if (spouseRels.length > 0) {
+      html += `<div class="info-item"><span class="info-label">Spouses:</span><span class="info-value">${spouseRels
+        .map((p) => escapeHtml(p.name))
+        .join(", ")}</span></div>`;
+    }
+    if (childRels.length > 0) {
+      html += `<div class="info-item"><span class="info-label">Children:</span><span class="info-value">${childRels
+        .map((p) => escapeHtml(p.name))
+        .join(", ")}</span></div>`;
+    }
+    html += `</div>`;
+  }
+
+  html += `
+    <div class="action-buttons">
+      <button class="btn-action" onclick="openRelationshipModal('parent', '${person.id}')">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg>
+        Add Parent
+      </button>
+      <button class="btn-action" onclick="openRelationshipModal('child', '${person.id}')">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg>
+        Add Child
+      </button>
+      <button class="btn-action" onclick="openRelationshipModal('spouse', '${person.id}')">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg>
+        Add Spouse
+      </button>
+      <button class="btn-action btn-action-secondary" onclick="{ document.getElementById('personId').value = '${person.id}'; openEditPersonModal(); }">Edit</button>
+      <button class="btn-action btn-action-danger" onclick="deleteSelectedPerson()">Delete</button>
+    </div>
+  `;
+
+  document.getElementById("drawerContent").innerHTML = html;
 }
 
-function escapeHtml(text) {
-  if (!text) return '';
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-}
-
-function updateRelationshipsList(person) {
-  const container = document.getElementById("relationshipsList");
-  container.innerHTML = "";
-  
-  // Find parents
-  const parentRels = state.relations.filter(r => r.type === "PARENT_CHILD" && r.bId === person.id);
-  const parents = parentRels.map(r => state.people.find(p => p.id === r.aId)).filter(Boolean);
-  
-  if (parents.length > 0) {
-    const parentsDiv = document.createElement("div");
-    parentsDiv.innerHTML = `<strong>Parents:</strong> ${parents.map(p => p.name).join(", ")}`;
-    container.appendChild(parentsDiv);
-  }
-  
-  // Find spouses
-  const spouseRels = state.relations.filter(r => 
-    r.type === "SPOUSE" && (r.aId === person.id || r.bId === person.id)
-  );
-  const spouses = spouseRels.map(r => {
-    const spouseId = r.aId === person.id ? r.bId : r.aId;
-    return state.people.find(p => p.id === spouseId);
-  }).filter(Boolean);
-  
-  if (spouses.length > 0) {
-    const spousesDiv = document.createElement("div");
-    spousesDiv.innerHTML = `<strong>Spouse(s):</strong> ${spouses.map(p => p.name).join(", ")}`;
-    container.appendChild(spousesDiv);
-  }
-  
-  // Find children
-  const childRels = state.relations.filter(r => r.type === "PARENT_CHILD" && r.aId === person.id);
-  const children = childRels.map(r => state.people.find(p => p.id === r.bId)).filter(Boolean);
-  
-  if (children.length > 0) {
-    const childrenDiv = document.createElement("div");
-    childrenDiv.innerHTML = `<strong>Children:</strong> ${children.map(p => p.name).join(", ")}`;
-    container.appendChild(childrenDiv);
-  }
-  
-  if (parents.length === 0 && spouses.length === 0 && children.length === 0) {
-    container.innerHTML = "<em>No relationships</em>";
-  }
-}
-
-// ===== PERSON CRUD =====
-function openAddPersonModal(relationContext = null) {
-  document.getElementById("modalTitle").textContent = "Add Person";
-  document.getElementById("personForm").reset();
-  document.getElementById("personId").value = "";
-  document.getElementById("personRelationContext").value = relationContext || "";
-  
-  // Populate origin datalists
-  updateOriginDataLists();
-  
-  document.getElementById("personModal").style.display = "flex";
-}
-
-function editSelectedPerson() {
-  const person = state.people.find(p => p.id === selectedPersonId);
+function openEditPersonModal() {
+  const person = state.people.find((p) => p.id === selectedPersonId);
   if (!person) return;
-  
-  document.getElementById("modalTitle").textContent = "Edit Person";
-  document.getElementById("personId").value = person.id;
+
+  document.getElementById("personModalTitle").textContent = "Edit Person";
   document.getElementById("personName").value = person.name;
   document.getElementById("personGender").value = person.gender || "";
   document.getElementById("personBirthYear").value = person.birthYear || "";
   document.getElementById("personDeathYear").value = person.deathYear || "";
   document.getElementById("personTag").value = person.tag || "";
   document.getElementById("personNotes").value = person.notes || "";
-  document.getElementById("personOriginCountry").value = person.originCountry || "";
+  document.getElementById("personOriginCountry").value =
+    person.originCountry || "";
   document.getElementById("personOriginCity").value = person.originCity || "";
   document.getElementById("personOriginArea").value = person.originArea || "";
-  document.getElementById("personOriginFamilyBranch").value = person.originFamilyBranch || "";
+  document.getElementById("personOriginFamilyBranch").value =
+    person.originFamilyBranch || "";
   document.getElementById("personOriginNotes").value = person.originNotes || "";
-  document.getElementById("personRelationContext").value = "";
-  
-  updateOriginDataLists();
-  
-  document.getElementById("personModal").style.display = "flex";
-}
 
-function handlePersonFormSubmit(e) {
-  e.preventDefault();
-  
-  const formData = new FormData(e.target);
-  const personId = formData.get("personId");
-  const relationContext = formData.get("relationContext");
-  
-  const personData = {
-    name: formData.get("name").trim(),
-    gender: formData.get("gender"),
-    birthYear: formData.get("birthYear").trim(),
-    deathYear: formData.get("deathYear").trim(),
-    tag: formData.get("tag").trim(),
-    notes: formData.get("notes").trim(),
-    originCountry: formData.get("originCountry").trim(),
-    originCity: formData.get("originCity").trim(),
-    originArea: formData.get("originArea").trim(),
-    originFamilyBranch: formData.get("originFamilyBranch").trim(),
-    originNotes: formData.get("originNotes").trim()
-  };
-  
-  if (!personData.name) {
-    alert("Name is required");
-    return;
-  }
-  
-  if (personId) {
-    // Edit existing person
-    const person = state.people.find(p => p.id === personId);
-    if (person) {
-      Object.assign(person, personData);
-    }
-  } else {
-    // Add new person
-    const newPerson = {
-      id: generateId(),
-      ...personData,
-      x: 400 + Math.random() * 200,
-      y: 200 + Math.random() * 200
-    };
-    
-    state.people.push(newPerson);
-    
-    // Handle relation context
-    if (relationContext && selectedPersonId) {
-      handleRelationContext(relationContext, selectedPersonId, newPerson.id);
-    }
-    
-    selectPerson(newPerson.id);
-  }
-  
-  debouncedSave();
   closeAllModals();
-  renderTree();
-  updateDrawer();
-  updateFilters();
-}
-
-function handleRelationContext(context, existingPersonId, newPersonId) {
-  const contextParts = context.split(":");
-  const relationType = contextParts[0];
-  
-  if (relationType === "parent") {
-    // New person is parent of existing person
-    addRelation("PARENT_CHILD", newPersonId, existingPersonId);
-  } else if (relationType === "child") {
-    // New person is child of existing person
-    addRelation("PARENT_CHILD", existingPersonId, newPersonId);
-  } else if (relationType === "spouse") {
-    // New person is spouse of existing person
-    addRelation("SPOUSE", existingPersonId, newPersonId);
-  }
-}
-
-function deleteSelectedPerson() {
-  if (!selectedPersonId) return;
-  
-  const person = state.people.find(p => p.id === selectedPersonId);
-  if (!person) return;
-  
-  if (!confirm(`Are you sure you want to delete ${person.name}? This will also remove all their relationships.`)) {
-    return;
-  }
-  
-  // Remove person
-  state.people = state.people.filter(p => p.id !== selectedPersonId);
-  
-  // Remove all relations involving this person
-  state.relations = state.relations.filter(r => r.aId !== selectedPersonId && r.bId !== selectedPersonId);
-  
-  debouncedSave();
-  closeDrawer();
-  renderTree();
-  updateFilters();
-}
-
-function addRelatedPerson(relationType) {
-  openAddPersonModal(`${relationType}:${selectedPersonId}`);
-}
-
-// ===== LINK EXISTING PERSON =====
-function openLinkExistingModal() {
-  if (!selectedPersonId) return;
-  
-  const person = state.people.find(p => p.id === selectedPersonId);
-  if (!person) return;
-  
-  // Set description
-  const desc = document.getElementById("linkModalDescription");
-  if (desc) {
-    desc.textContent = `Link ${person.name} to another person in the tree`;
-  }
-  
-  // Populate person list
-  const select = document.getElementById("linkPersonSelect");
-  if (select) {
-    select.innerHTML = '';
-    
-    state.people.forEach(p => {
-      if (p.id !== selectedPersonId) {
-        const option = document.createElement("option");
-        option.value = p.id;
-        option.textContent = p.name;
-        select.appendChild(option);
-      }
-    });
-  }
-  
-  // Clear search input
-  const searchInput = document.getElementById("linkSearchInput");
-  if (searchInput) {
-    searchInput.value = "";
-  }
-  
-  document.getElementById("linkModal").style.display = "flex";
-}
-
-function addRelation(type, aId, bId) {
-  // Prevent duplicate relations
-  const exists = state.relations.some(r => 
-    r.type === type && 
-    ((r.aId === aId && r.bId === bId) || (type === "SPOUSE" && r.aId === bId && r.bId === aId))
-  );
-  
-  if (exists) {
-    alert("This relationship already exists");
-    return;
-  }
-  
-  // Prevent impossible relations
-  if (aId === bId) {
-    alert("A person cannot have a relationship with themselves");
-    return;
-  }
-  
-  state.relations.push({
-    id: generateId(),
-    type,
-    aId,
-    bId
-  });
-}
-
-// ===== COPY ORIGIN =====
-function openCopyOriginModal() {
-  if (!selectedPersonId) return;
-  
-  const select = document.getElementById("copyOriginFromPerson");
-  select.innerHTML = '<option value="">-- Select Person --</option>';
-  
-  state.people.forEach(p => {
-    if (p.id !== selectedPersonId && (p.originCountry || p.originCity)) {
-      const option = document.createElement("option");
-      option.value = p.id;
-      option.textContent = `${p.name} (${p.originCity || p.originCountry})`;
-      select.appendChild(option);
-    }
-  });
-  
-  document.getElementById("copyOriginModal").style.display = "flex";
-}
-
-function handleCopyOriginSubmit(e) {
-  e.preventDefault();
-  
-  const formData = new FormData(e.target);
-  const sourcePersonId = formData.get("sourcePersonId");
-  
-  if (!sourcePersonId) {
-    alert("Please select a person");
-    return;
-  }
-  
-  const sourcePerson = state.people.find(p => p.id === sourcePersonId);
-  const targetPerson = state.people.find(p => p.id === selectedPersonId);
-  
-  if (!sourcePerson || !targetPerson) return;
-  
-  targetPerson.originCountry = sourcePerson.originCountry;
-  targetPerson.originCity = sourcePerson.originCity;
-  targetPerson.originArea = sourcePerson.originArea;
-  targetPerson.originFamilyBranch = sourcePerson.originFamilyBranch;
-  targetPerson.originNotes = sourcePerson.originNotes;
-  
-  debouncedSave();
-  closeAllModals();
-  renderTree();
-  updateDrawer();
+  document.getElementById("personModal").classList.remove("hidden");
 }
 
 // ===== FILTERS =====
-function updateFilters() {
-  updateCountryFilter();
-  updateCityFilter();
-}
-
 function updateCountryFilter() {
-  const countries = new Set();
-  state.people.forEach(p => {
-    if (p.originCountry) countries.add(p.originCountry);
-  });
-  
+  const countries = [
+    ...new Set(state.people.map((p) => p.originCountry).filter(Boolean)),
+  ].sort();
   const select = document.getElementById("countryFilter");
   const currentValue = select.value;
-  
-  select.innerHTML = '<option value="All">All Countries</option>';
-  Array.from(countries).sort().forEach(country => {
-    const option = document.createElement("option");
-    option.value = country;
-    option.textContent = country;
-    select.appendChild(option);
-  });
-  
-  // Restore selection if still valid
-  if (currentValue !== "All" && countries.has(currentValue)) {
-    select.value = currentValue;
-  } else {
-    select.value = "All";
-    state.ui.filterCountry = "All";
-  }
+  select.innerHTML =
+    '<option value="All">All</option>' +
+    countries.map((c) => `<option value="${c}">${c}</option>`).join("");
+  select.value = currentValue;
 }
 
 function updateCityFilter() {
-  const cities = new Set();
-  
-  state.people.forEach(p => {
-    if (p.originCity) {
-      // Filter by country if selected
-      if (state.ui.filterCountry === "All" || p.originCountry === state.ui.filterCountry) {
-        cities.add(p.originCity);
-      }
-    }
-  });
-  
+  const cities = [
+    ...new Set(
+      state.people
+        .filter(
+          (p) =>
+            state.ui.filterCountry === "All" ||
+            p.originCountry === state.ui.filterCountry
+        )
+        .map((p) => p.originCity)
+        .filter(Boolean)
+    ),
+  ].sort();
   const select = document.getElementById("cityFilter");
   const currentValue = select.value;
-  
-  select.innerHTML = '<option value="All">All Cities</option>';
-  Array.from(cities).sort().forEach(city => {
-    const option = document.createElement("option");
-    option.value = city;
-    option.textContent = city;
-    select.appendChild(option);
-  });
-  
-  // Restore selection if still valid
-  if (currentValue !== "All" && cities.has(currentValue)) {
-    select.value = currentValue;
-  } else {
-    select.value = "All";
-    state.ui.filterCity = "All";
-  }
+  select.innerHTML =
+    '<option value="All">All</option>' +
+    cities.map((c) => `<option value="${c}">${c}</option>`).join("");
+  select.value = currentValue;
 }
 
-function updateOriginDataLists() {
-  // Countries
-  const countries = new Set(["Bahrain", "Saudi Arabia", "Kuwait", "UAE", "Qatar", "Oman"]);
-  state.people.forEach(p => {
-    if (p.originCountry) countries.add(p.originCountry);
+// ===== LINK PERSON LISTBOX =====
+let linkListHighlightIndex = -1;
+let linkListFilteredPeople = [];
+
+function populateLinkPersonList(type, personId) {
+  const listbox = document.getElementById("relLinkListbox");
+  const selectedPerson = state.people.find((p) => p.id === personId);
+  const selectedBirthYear = selectedPerson?.birthYear;
+
+  // Filter people based on type and smart rules
+  let candidates = state.people.filter((p) => {
+    // Cannot link to self
+    if (p.id === personId) return false;
+
+    // Smart filtering for parent: must be at least 12 years older
+    if (type === "parent" && selectedBirthYear && p.birthYear) {
+      if (p.birthYear > selectedBirthYear - 12) return false;
+    }
+
+    // Smart filtering for child: must be at least 12 years younger
+    if (type === "child" && selectedBirthYear && p.birthYear) {
+      if (p.birthYear < selectedBirthYear + 12) return false;
+    }
+
+    return true;
   });
-  
-  const countryList = document.getElementById("countrySuggestions");
-  if (countryList) {
-    countryList.innerHTML = "";
-    Array.from(countries).sort().forEach(country => {
-      const option = document.createElement("option");
-      option.value = country;
-      countryList.appendChild(option);
-    });
-  }
-  
-  // Cities
-  const cities = new Set();
-  state.people.forEach(p => {
-    if (p.originCity) cities.add(p.originCity);
-  });
-  
-  const cityList = document.getElementById("citySuggestions");
-  if (cityList) {
-    cityList.innerHTML = "";
-    Array.from(cities).sort().forEach(city => {
-      const option = document.createElement("option");
-      option.value = city;
-      cityList.appendChild(option);
-    });
-  }
+
+  linkListFilteredPeople = candidates;
+  linkListHighlightIndex = -1;
+  renderLinkPersonList();
 }
 
-// ===== SETTINGS =====
-function openSettings() {
-  const toggle = document.getElementById("hideOriginBadgesToggle");
-  if (toggle) {
-    toggle.checked = state.ui.hideOriginBadges;
+function renderLinkPersonList(searchQuery = "") {
+  const listbox = document.getElementById("relLinkListbox");
+  const query = searchQuery.toLowerCase().trim();
+
+  // Filter by search query
+  let filtered = linkListFilteredPeople;
+  if (query) {
+    filtered = linkListFilteredPeople.filter(
+      (p) =>
+        p.name.toLowerCase().includes(query) ||
+        (p.birthYear && p.birthYear.toString().includes(query))
+    );
   }
-  document.getElementById("settingsModal").style.display = "flex";
+
+  if (filtered.length === 0) {
+    listbox.innerHTML =
+      '<div class="link-listbox-empty">No matching people</div>';
+    return;
+  }
+
+  const selectedId = document.getElementById("relLinkSelectedId").value;
+
+  listbox.innerHTML = filtered
+    .map((p, idx) => {
+      const isSelected = p.id === selectedId;
+      const isHighlighted = idx === linkListHighlightIndex;
+      const genderClass = p.gender ? p.gender.toLowerCase() : "";
+      const genderLabel = p.gender || "Unknown";
+
+      return `
+      <div class="link-person-item ${isSelected ? "selected" : ""} ${
+        isHighlighted ? "highlighted" : ""
+      }"
+           data-id="${p.id}"
+           data-index="${idx}"
+           role="option"
+           aria-selected="${isSelected}">
+        <div class="link-person-info">
+          <span class="link-person-name">${escapeHtml(p.name)}</span>
+          <span class="link-person-year">${p.birthYear || "?"}</span>
+        </div>
+        <span class="link-person-badge ${genderClass}">${genderLabel}</span>
+      </div>
+    `;
+    })
+    .join("");
+
+  // Store filtered list for keyboard navigation
+  listbox._filteredList = filtered;
+
+  // Add click handlers
+  listbox.querySelectorAll(".link-person-item").forEach((item) => {
+    item.addEventListener("click", () => selectLinkPerson(item.dataset.id));
+  });
 }
 
-// ===== NAVIGATION =====
-function focusOnPerson() {
-  if (!selectedPersonId) return;
-  
-  const person = state.people.find(p => p.id === selectedPersonId);
+function selectLinkPerson(personId) {
+  const person = state.people.find((p) => p.id === personId);
   if (!person) return;
-  
-  const svg = document.getElementById("treeSvg");
-  if (!svg) return;
-  
-  const rect = svg.getBoundingClientRect();
-  const centerX = rect.width / 2;
-  const centerY = rect.height / 2;
-  
-  viewState.offsetX = centerX - person.x * viewState.scale;
-  viewState.offsetY = centerY - person.y * viewState.scale;
-  
+
+  // Update hidden input
+  document.getElementById("relLinkSelectedId").value = personId;
+
+  // Update preview
+  const preview = document.getElementById("relLinkPreview");
+  const previewText = document.getElementById("relLinkPreviewText");
+  const typeLabel =
+    currentRelationshipType === "parent"
+      ? "as Parent"
+      : currentRelationshipType === "child"
+      ? "as Child"
+      : currentRelationshipType === "spouse"
+      ? "as Spouse"
+      : "";
+  previewText.textContent = `${person.name} (${
+    person.birthYear || "?"
+  }) ${typeLabel}`;
+  preview.classList.remove("hidden");
+
+  // Enable submit button
+  document.getElementById("relLinkSubmitBtn").disabled = false;
+
+  // Re-render to show selection
+  const searchQuery = document.getElementById("relLinkSearch").value;
+  renderLinkPersonList(searchQuery);
+}
+
+function filterLinkPersonList(e) {
+  const query = e.target.value;
+  linkListHighlightIndex = -1;
+  renderLinkPersonList(query);
+}
+
+function handleLinkListKeydown(e) {
+  const listbox = document.getElementById("relLinkListbox");
+  const items = listbox.querySelectorAll(".link-person-item");
+  const filteredList = listbox._filteredList || [];
+
+  if (filteredList.length === 0) return;
+
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    linkListHighlightIndex = Math.min(
+      linkListHighlightIndex + 1,
+      filteredList.length - 1
+    );
+    updateHighlight(items);
+    scrollHighlightIntoView(listbox, items);
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    linkListHighlightIndex = Math.max(linkListHighlightIndex - 1, 0);
+    updateHighlight(items);
+    scrollHighlightIntoView(listbox, items);
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    if (
+      linkListHighlightIndex >= 0 &&
+      linkListHighlightIndex < filteredList.length
+    ) {
+      selectLinkPerson(filteredList[linkListHighlightIndex].id);
+    }
+  }
+}
+
+function updateHighlight(items) {
+  items.forEach((item, idx) => {
+    item.classList.toggle("highlighted", idx === linkListHighlightIndex);
+  });
+}
+
+function scrollHighlightIntoView(listbox, items) {
+  if (linkListHighlightIndex >= 0 && items[linkListHighlightIndex]) {
+    const item = items[linkListHighlightIndex];
+    const itemRect = item.getBoundingClientRect();
+    const listRect = listbox.getBoundingClientRect();
+
+    if (itemRect.bottom > listRect.bottom) {
+      item.scrollIntoView({ block: "end", behavior: "smooth" });
+    } else if (itemRect.top < listRect.top) {
+      item.scrollIntoView({ block: "start", behavior: "smooth" });
+    }
+  }
+}
+
+function escapeHtml(text) {
+  const div = document.createElement("div");
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+function updateClearSearchButton() {
+  document
+    .getElementById("clearSearchBtn")
+    .classList.toggle("hidden", !searchQuery);
+}
+
+function updateClearFiltersButton() {
+  const isActive =
+    state.ui.filterCountry !== "All" || state.ui.filterCity !== "All";
+  document
+    .getElementById("clearFiltersBtn")
+    .classList.toggle("hidden", !isActive);
+}
+
+// ===== SVG INTERACTIONS =====
+function setupSVGInteractions() {
+  svgElement.addEventListener("mousedown", handleSVGMouseDown);
+  svgElement.addEventListener("mousemove", handleSVGMouseMove);
+  svgElement.addEventListener("mouseup", handleSVGMouseUp);
+  svgElement.addEventListener("wheel", handleSVGWheel, { passive: false });
+  svgElement.addEventListener("touchstart", handleTouchStart);
+  svgElement.addEventListener("touchmove", handleTouchMove);
+  svgElement.addEventListener("touchend", handleTouchEnd);
+}
+
+function handleSVGMouseDown(e) {
+  if (e.button !== 0 || e.target.closest(".node")) return;
+  viewState.isDragging = true;
+  viewState.dragStartX = e.clientX;
+  viewState.dragStartY = e.clientY;
+  svgElement.classList.add("panning");
+}
+
+function handleSVGMouseMove(e) {
+  // Handle node dragging
+  if (viewState.draggedNode) {
+    const person = state.people.find((p) => p.id === viewState.draggedNode);
+    if (person) {
+      const dx = (e.clientX - viewState.nodeDragStartX) / viewState.scale;
+      const dy = (e.clientY - viewState.nodeDragStartY) / viewState.scale;
+      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+        viewState.nodeMoved = true;
+      }
+      person.x += dx;
+      person.y += dy;
+      viewState.nodeDragStartX = e.clientX;
+      viewState.nodeDragStartY = e.clientY;
+      renderTree();
+    }
+    return;
+  }
+
+  // Handle canvas panning
+  if (!viewState.isDragging) return;
+  const dx = e.clientX - viewState.dragStartX;
+  const dy = e.clientY - viewState.dragStartY;
+  viewState.offsetX += dx;
+  viewState.offsetY += dy;
+  viewState.dragStartX = e.clientX;
+  viewState.dragStartY = e.clientY;
   applyViewTransform();
+}
+
+function handleSVGMouseUp() {
+  // End node dragging
+  if (viewState.draggedNode) {
+    // Mark node as manually positioned if it was actually moved
+    if (viewState.nodeMoved) {
+      const person = state.people.find((p) => p.id === viewState.draggedNode);
+      if (person) {
+        person.hasManualPos = true;
+      }
+    }
+    viewState.draggedNode = null;
+    debouncedSave();
+  }
+
+  viewState.isDragging = false;
+  svgElement.classList.remove("panning");
+}
+
+function handleSVGWheel(e) {
+  e.preventDefault();
+  const rect = svgElement.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+  const factor = e.deltaY > 0 ? 0.9 : 1.1;
+  zoomBy(factor, x, y);
+}
+
+function handleTouchStart(e) {
+  if (e.touches.length === 1) {
+    viewState.isDragging = true;
+    viewState.dragStartX = e.touches[0].clientX;
+    viewState.dragStartY = e.touches[0].clientY;
+  }
+}
+
+function handleTouchMove(e) {
+  if (e.touches.length === 1 && viewState.isDragging) {
+    const dx = e.touches[0].clientX - viewState.dragStartX;
+    const dy = e.touches[0].clientY - viewState.dragStartY;
+    viewState.offsetX += dx;
+    viewState.offsetY += dy;
+    viewState.dragStartX = e.touches[0].clientX;
+    viewState.dragStartY = e.touches[0].clientY;
+    applyViewTransform();
+  }
+}
+
+function handleTouchEnd() {
+  viewState.isDragging = false;
+}
+
+function zoomBy(
+  factor,
+  x = svgElement.clientWidth / 2,
+  y = svgElement.clientHeight / 2
+) {
+  const newScale = Math.max(0.1, Math.min(5, viewState.scale * factor));
+  viewState.offsetX =
+    x - (x - viewState.offsetX) * (newScale / viewState.scale);
+  viewState.offsetY =
+    y - (y - viewState.offsetY) * (newScale / viewState.scale);
+  viewState.scale = newScale;
+  applyViewTransform();
+  updateZoomLevel();
+}
+
+function applyViewTransform() {
+  svgElement.style.transform = `translate(${viewState.offsetX}px, ${viewState.offsetY}px) scale(${viewState.scale})`;
+}
+
+function updateZoomLevel() {
+  document.getElementById("zoomLevel").textContent =
+    Math.round(viewState.scale * 100) + "%";
 }
 
 function fitTreeToScreen() {
   if (state.people.length === 0) return;
-  
-  const svg = document.getElementById("treeSvg");
-  if (!svg) return;
-  
-  // Find bounds
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  
-  state.people.forEach(p => {
-    minX = Math.min(minX, p.x);
-    minY = Math.min(minY, p.y);
-    maxX = Math.max(maxX, p.x);
-    maxY = Math.max(maxY, p.y);
-  });
-  
-  const padding = 100;
-  const treeWidth = maxX - minX + padding * 2;
-  const treeHeight = maxY - minY + padding * 2;
-  
-  const rect = svg.getBoundingClientRect();
-  const scaleX = rect.width / treeWidth;
-  const scaleY = rect.height / treeHeight;
-  
-  viewState.scale = Math.min(scaleX, scaleY, 1);
-  
-  const centerX = (minX + maxX) / 2;
-  const centerY = (minY + maxY) / 2;
-  
-  viewState.offsetX = rect.width / 2 - centerX * viewState.scale;
-  viewState.offsetY = rect.height / 2 - centerY * viewState.scale;
-  
+  const xs = state.people.map((p) => p.x);
+  const ys = state.people.map((p) => p.y);
+  const minX = Math.min(...xs) - 80;
+  const maxX = Math.max(...xs) + 80;
+  const minY = Math.min(...ys) - 50;
+  const maxY = Math.max(...ys) + 50;
+  const w = svgElement.clientWidth;
+  const h = svgElement.clientHeight;
+  const scaleX = w / (maxX - minX);
+  const scaleY = h / (maxY - minY);
+  viewState.scale = Math.min(scaleX, scaleY, 2);
+  viewState.offsetX =
+    -minX * viewState.scale + (w - (maxX - minX) * viewState.scale) / 2;
+  viewState.offsetY =
+    -minY * viewState.scale + (h - (maxY - minY) * viewState.scale) / 2;
   applyViewTransform();
+  updateZoomLevel();
+  closeAllModals();
 }
 
-// ===== EXPORT / IMPORT =====
+document
+  .getElementById("zoomInBtn")
+  .addEventListener("click", () => zoomBy(1.2));
+document
+  .getElementById("zoomOutBtn")
+  .addEventListener("click", () => zoomBy(0.8));
+
+// ===== IMPORT/EXPORT (Legacy Support) =====
 function exportData() {
-  const dataStr = JSON.stringify(state, null, 2);
-  const blob = new Blob([dataStr], { type: "application/json" });
+  // Ensure meta is updated
+  state.meta = state.meta || {};
+  state.meta.updatedAt = new Date().toISOString();
+
+  const json = JSON.stringify(state, null, 2);
+  const blob = new Blob([json], { type: "application/json" });
   const url = URL.createObjectURL(blob);
-  
   const a = document.createElement("a");
   a.href = url;
-  a.download = `family-tree-${new Date().toISOString().split("T")[0]}.json`;
+  const filename =
+    (state.meta?.projectName || "family-tree") +
+    "-export-" +
+    new Date().toISOString().slice(0, 10) +
+    ".json";
+  a.download = filename;
   a.click();
-  
   URL.revokeObjectURL(url);
+  showToast("Exported: " + filename, "success");
 }
 
 function importData(e) {
   const file = e.target.files[0];
   if (!file) return;
-  
+
   const reader = new FileReader();
-  reader.onload = (event) => {
+  reader.onload = (ev) => {
     try {
-      const imported = JSON.parse(event.target.result);
-      
-      // Validate basic structure
-      if (!imported.people || !Array.isArray(imported.people)) {
-        alert("Invalid file format: missing people array");
+      const imported = JSON.parse(ev.target.result);
+
+      // Validate the imported data
+      const validationResult = validateProjectData(imported);
+      if (!validationResult.valid) {
+        showToast(
+          "Invalid file: " + validationResult.errors.join(", "),
+          "error"
+        );
         return;
       }
-      
-      if (!imported.relations || !Array.isArray(imported.relations)) {
-        alert("Invalid file format: missing relations array");
-        return;
-      }
-      
-      // Validate unique IDs
-      const ids = new Set();
-      for (const person of imported.people) {
-        if (ids.has(person.id)) {
-          alert(`Duplicate person ID found: ${person.id}`);
-          return;
-        }
-        ids.add(person.id);
-      }
-      
-      // Validate relations
-      const validRelations = imported.relations.filter(rel => {
-        if (!ids.has(rel.aId) || !ids.has(rel.bId)) {
-          console.warn(`Skipping invalid relation: ${rel.id}`);
-          return false;
-        }
-        return true;
-      });
-      
-      imported.relations = validRelations;
-      
-      // Migrate data
+
+      // Show warnings
+      validationResult.warnings.forEach((w) => showToast(w, "warning"));
+
       migrateData(imported);
-      
-      // Load imported data
+
+      // Ensure meta exists
+      if (!imported.meta) {
+        imported.meta = {
+          projectName: file.name.replace(/\.(familytree\.)?json$/i, ""),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+      }
+
       state = imported;
-      
-      // Reset view
-      viewState = {
-        offsetX: 0,
-        offsetY: 0,
-        scale: 1,
-        isDragging: false,
-        dragStartX: 0,
-        dragStartY: 0,
-        draggedNode: null
-      };
-      
-      selectedPersonId = null;
-      
-      debouncedSave();
+      fileHandle = null; // Import doesn't set file handle
+      saveData();
       renderTree();
-      updateFilters();
-      closeDrawer();
-      
-      alert("Data imported successfully!");
-    } catch (err) {
-      console.error("Import error:", err);
-      alert("Failed to import file. Please check the file format.");
+      updateCountryFilter();
+      updateCityFilter();
+      markSaved();
+      updateProjectUI();
+      showToast("Imported successfully", "success");
+    } catch (error) {
+      showToast("Import failed: " + error.message, "error");
     }
   };
-  
   reader.readAsText(file);
-  
-  // Reset file input
-  e.target.value = "";
+  e.target.value = ""; // Reset input
 }
 
-// ===== PRINT =====
 function printTree() {
   window.print();
 }
 
-// ===== RESET =====
-function resetData() {
-  if (!confirm("Are you sure you want to reset ALL data? This cannot be undone!")) {
-    return;
-  }
-  
-  if (!confirm("FINAL WARNING: All your family tree data will be permanently deleted. Continue?")) {
-    return;
-  }
-  
-  localStorage.removeItem("familyTreeData");
-  loadSampleData();
-  
-  viewState = {
-    offsetX: 0,
-    offsetY: 0,
-    scale: 1,
-    isDragging: false,
-    dragStartX: 0,
-    dragStartY: 0,
-    draggedNode: null
-  };
-  
-  selectedPersonId = null;
-  searchQuery = "";
-  
-  document.getElementById("searchInput").value = "";
-  
-  renderTree();
-  updateFilters();
-  closeDrawer();
-  
-  alert("Data has been reset to sample data.");
-}
-
 // ===== UTILITIES =====
-function generateId() {
-  return "id_" + Date.now() + "_" + Math.random().toString(36).substr(2, 9);
+function escapeHtml(text) {
+  const div = document.createElement("div");
+  div.textContent = text;
+  return div.innerHTML;
 }
 
-function closeAllModals() {
-  document.querySelectorAll(".modal").forEach(modal => {
-    modal.style.display = "none";
-  });
+function showToast(message, type = "info") {
+  const container = document.getElementById("toastContainer");
+  const toast = document.createElement("div");
+  toast.className = `toast ${type}`;
+  toast.textContent = message;
+  container.appendChild(toast);
+  setTimeout(() => {
+    toast.style.animation = "slideOut 300ms ease-in forwards";
+    setTimeout(() => toast.remove(), 300);
+  }, 3000);
 }
 
-function updateClearSearchButton() {
-  const btn = document.getElementById("clearSearchBtn");
-  if (btn) {
-    btn.classList.toggle("hidden", !searchQuery);
+// Close menu on outside click
+document.addEventListener("click", (e) => {
+  if (
+    !e.target.closest(".menu-container") &&
+    !e.target.closest(".filter-panel")
+  ) {
+    document.getElementById("moreMenu").classList.add("hidden");
+    document.getElementById("filterPanel").classList.add("hidden");
   }
-}
-
-function updateClearFiltersButton() {
-  const btn = document.getElementById("clearFiltersBtn");
-  if (btn) {
-    const hasFilters = state.ui.filterCountry !== "All" || state.ui.filterCity !== "All";
-    btn.classList.toggle("hidden", !hasFilters);
-  }
-}
-
-function zoomBy(factor) {
-  const svg = document.getElementById("treeSvg");
-  if (!svg) return;
-  
-  const newScale = Math.max(0.1, Math.min(5, viewState.scale * factor));
-  
-  const rect = svg.getBoundingClientRect();
-  const centerX = rect.width / 2;
-  const centerY = rect.height / 2;
-  
-  viewState.offsetX = centerX - (centerX - viewState.offsetX) * (newScale / viewState.scale);
-  viewState.offsetY = centerY - (centerY - viewState.offsetY) * (newScale / viewState.scale);
-  viewState.scale = newScale;
-  
-  applyViewTransform();
-  updateZoomDisplay();
-}
-
-function updateZoomDisplay() {
-  const display = document.getElementById("zoomLevel");
-  if (display) {
-    display.textContent = `${Math.round(viewState.scale * 100)}%`;
-  }
-}
-
-function applyViewTransform() {
-  const container = document.getElementById("treeContainer");
-  if (!container) return;
-  
-  const svg = container.querySelector("svg");
-  const treeGroup = svg ? svg.querySelector("#treeGroup") : null;
-  
-  if (treeGroup) {
-    const transform = `translate(${viewState.offsetX}, ${viewState.offsetY}) scale(${viewState.scale})`;
-    treeGroup.setAttribute("transform", transform);
-  }
-  
-  updateZoomDisplay();
-}
-
-function filterLinkPersonList(query) {
-  const select = document.getElementById("linkPersonSelect");
-  if (!select) return;
-  
-  const lowerQuery = query.toLowerCase();
-  Array.from(select.options).forEach(option => {
-    const matches = option.textContent.toLowerCase().includes(lowerQuery);
-    option.style.display = matches ? "" : "none";
-  });
-}
-
-let confirmCallback = null;
-
-function showConfirm(message, callback) {
-  document.getElementById("confirmMessage").textContent = message;
-  document.getElementById("confirmModal").style.display = "flex";
-  confirmCallback = callback;
-}
-
-function handleConfirmOk() {
-  if (confirmCallback) {
-    confirmCallback();
-    confirmCallback = null;
-  }
-  closeAllModals();
-}
-
-function confirmLinkPerson() {
-  const select = document.getElementById("linkPersonSelect");
-  const relationType = document.querySelector('input[name="linkRelationType"]:checked');
-  
-  if (!select || !select.value) {
-    alert("Please select a person");
-    return;
-  }
-  
-  if (!relationType) {
-    alert("Please select a relationship type");
-    return;
-  }
-  
-  const targetPersonId = select.value;
-  const type = relationType.value;
-  
-  if (type === "parent") {
-    addRelation("PARENT_CHILD", targetPersonId, selectedPersonId);
-  } else if (type === "child") {
-    addRelation("PARENT_CHILD", selectedPersonId, targetPersonId);
-  } else if (type === "spouse") {
-    addRelation("SPOUSE", selectedPersonId, targetPersonId);
-  }
-  
-  debouncedSave();
-  closeAllModals();
-  renderTree();
-  updateDrawer();
-}
-
-function toggleMobileMenu() {
-  const btn = document.getElementById("mobileMenuBtn");
-  const topBarCenter = document.querySelector(".top-bar-center");
-  const topBarRight = document.querySelector(".top-bar-right");
-  
-  const isExpanded = btn?.getAttribute("aria-expanded") === "true";
-  btn?.setAttribute("aria-expanded", !isExpanded);
-  
-  if (topBarCenter) topBarCenter.classList.toggle("show");
-  if (topBarRight) topBarRight.classList.toggle("show");
-}
-
-function handleKeyboardShortcuts(e) {
-  // Ctrl/Cmd + F: Focus search
-  if ((e.ctrlKey || e.metaKey) && e.key === "f") {
-    e.preventDefault();
-    document.getElementById("searchInput")?.focus();
-  }
-  
-  // H: Fit to screen
-  if (e.key === "h" || e.key === "H") {
-    if (e.target.tagName !== "INPUT" && e.target.tagName !== "TEXTAREA") {
-      e.preventDefault();
-      fitTreeToScreen();
-    }
-  }
-  
-  // Esc: Close modals/drawer
-  if (e.key === "Escape") {
-    const hasOpenModal = Array.from(document.querySelectorAll(".modal")).some(
-      m => m.style.display === "block"
-    );
-    if (hasOpenModal) {
-      closeAllModals();
-    } else if (document.getElementById("drawer")?.classList.contains("open")) {
-      closeDrawer();
-    }
-  }
-  
-  // Delete: Delete selected person
-  if (e.key === "Delete" && selectedPersonId) {
-    if (e.target.tagName !== "INPUT" && e.target.tagName !== "TEXTAREA") {
-      e.preventDefault();
-      deleteSelectedPerson();
-    }
-  }
-  
-  // +/-: Zoom
-  if (e.key === "+" || e.key === "=") {
-    if (e.target.tagName !== "INPUT" && e.target.tagName !== "TEXTAREA") {
-      e.preventDefault();
-      zoomBy(1.2);
-    }
-  }
-  if (e.key === "-" || e.key === "_") {
-    if (e.target.tagName !== "INPUT" && e.target.tagName !== "TEXTAREA") {
-      e.preventDefault();
-      zoomBy(0.8);
-    }
-  }
-}
-}
+});

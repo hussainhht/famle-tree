@@ -1,138 +1,109 @@
 You are a senior frontend engineer and UX designer.
 
-Goal
-Build a SIMPLE, offline-first “Family Tree Builder” web app that I can run by double-clicking index.html (no backend, no login, no database, no build tools). It must be easy for a non-expert to use to DRAW and maintain my family tree.
+Context
+I have a plain HTML/CSS/JS offline “Family Tree Builder” app (runs locally, no frameworks).
+Current UI has:
+- top toolbar (search, country/city filters, add person, export/import/print/settings/reset)
+- SVG tree canvas with nodes + edges
+- zoom controls
+- localStorage persistence + JSON import/export
+- person drawer/modal for editing and relationships
 
-Deliverables
-Create a small project with these files:
-- index.html
-- styles.css
-- app.js
-- README.md
+Goal
+Make the app LOOK BETTER and FEEL MUCH SIMPLER to use, while keeping it offline and easy to extend later.
 
 Hard constraints
-- No frameworks required (plain HTML/CSS/JS).
-- No npm, no Next.js, no server needed.
-- Data must persist locally using localStorage.
-- Provide Export / Import as a JSON file so I can back up and move to another device.
-- Must work on modern Chrome/Edge.
-- Keep UI clean, minimal, and mobile-friendly.
+- Plain HTML/CSS/JS only (no npm, no frameworks).
+- Must run by opening app.html (or index.html) directly.
+- Keep localStorage + export/import JSON.
+- Keep backward compatible data schema (dataVersion 2).
+- No feature removals—only simplify the UX and reorganize.
 
-Core features (must implement)
-1) People (nodes)
-- Add person with: Full Name (required), Gender (optional), Birth year (optional), Death year (optional), Notes (optional).
-- Edit person.
-- Delete person (with confirmation).
-- Optional: a small “branch/tag” field (e.g., “Al-____”).
-- Each person has a unique id generated in JS.
+Top UX/DESIGN priorities (must implement)
+1) Simplify the top bar
+- Reduce visual noise by grouping actions into 2–3 groups:
+  A) Search + Filters
+  B) Primary action: “+ Add Person”
+  C) Secondary actions behind a “More” menu (Export/Import/Print/Settings/Reset)
+- Keep the bar compact with consistent spacing and icon-only buttons with tooltips where suitable.
+- Make it responsive: on smaller screens collapse filters into one “Filters” button that opens a small panel.
 
-2) Relationships (edges)
-- Parent → Child link.
-- Spouse link.
-- UI must let me:
-  - Select a person, click “Add Parent”, “Add Child”, “Add Spouse”
-  - Or “Link Existing Person” (choose from list) to avoid duplicates
-- Prevent impossible links (e.g., parent=child, duplicate edges).
+2) Make the “Add Person” flow ultra simple
+- Clicking “Add Person” opens a clean modal with only:
+  Name (required), Gender, BirthYear, DeathYear, Origin (Country/City), Notes
+- Advanced fields should be hidden under a “More details” accordion (tag, originArea, originFamilyBranch, originNotes).
 
-3) Tree drawing
-- Render the tree visually using SVG (preferred) or Canvas.
-- Provide pan + zoom (mouse wheel; touch-friendly if possible).
-- Provide a simple auto-layout:
-  - Generations stacked vertically (ancestors above, descendants below)
-  - Siblings aligned horizontally
-  - Spouses side-by-side
-- Nodes should be draggable to manually adjust positions (store positions).
-- Clicking a node opens a right-side drawer with details + actions.
+3) Make relationships simpler
+- In the person drawer, show 3 big buttons:
+  - Add Parent
+  - Add Child
+  - Add Spouse
+Each button opens a small modal with two tabs:
+  - Create New Person
+  - Link Existing Person (searchable list)
+- Prevent duplicates and invalid links; show friendly inline error messages.
 
-4) Search & navigation
-- Search box that filters and highlights matching names.
-- Search must match:
-  - name
-  - tag
-  - originCountry/originCity/originArea/originFamilyBranch
-- “Focus” button: centers the view on a selected person.
-- “Home” button: fits the full tree to screen.
+4) Improve tree canvas clarity
+- Add a subtle dotted/grid background (toggleable).
+- Edges should be visually clearer:
+  - Parent-child = solid line
+  - Spouse = dashed line
+- Show edge routing that avoids ugly overlaps when possible (simple orthogonal/curved lines is fine).
+- Add “Fit to screen” + “Center selected” controls.
+- Add an empty-state overlay when there are fewer than 2 people:
+  “Click + Add Person to start”, “Drag nodes”, “Scroll to zoom”.
 
-5) Safety / backup / printing
-- Export JSON (download file).
-- Import JSON (upload file).
-- “Reset data” button with strong confirmation.
-- “Print / Save as PDF” view: a clean layout for printing (basic is fine).
+5) Node cards redesign (clean & consistent)
+- Use a single minimal card style:
+  - Name (strong)
+  - Small line: birth–death (if present)
+  - Small badge: city or country (if enabled)
+- Selected node: clear highlight ring + subtle shadow.
+- Hover state: subtle highlight.
+- Make nodes slightly larger and use readable typography.
 
-UX requirements
-- Top bar with: Add Person, Search, Country Filter, City Filter, Export, Import, Print, Reset, Settings
-- Right panel (drawer) with: person info + quick relationship buttons + origin/roots section
-- Helpful empty state (“No people yet—click Add Person”)
-- Clear error messages and validation
-- Mobile-friendly layout
+6) Better feedback (no alert spam)
+- Replace alert() with toast notifications for:
+  - Saved
+  - Imported successfully
+  - Exported
+  - Error messages
+- Confirm dialogs should be modal style (Reset / Delete).
 
-Origin / Roots feature (must implement)
-1) Data model updates (backward compatible)
-Extend each person with:
-- originCountry (string, optional)  // e.g., Bahrain, Saudi Arabia
-- originCity (string, optional)     // e.g., Manama, A’ali, Sitra
-- originArea (string, optional)     // e.g., village/neighborhood: ‘Aker, Jableh, etc.
-- originFamilyBranch (string, optional) // e.g., branch/tribe/family label
-- originNotes (string, optional)
+7) Settings as a tiny modal
+- Keep it SIMPLE with toggles:
+  - Hide origin badges
+  - Show grid
+  - Reduce motion
+- Add “Load demo data” button (with confirmation).
 
-Older saved data without these fields must NOT break the app; missing fields should default to "".
+8) Code quality improvements (keep it simple)
+- Refactor app.js into small sections:
+  - state management + persistence
+  - rendering (tree)
+  - UI events (modals, drawer, toolbar)
+  - helpers (id generation, validation, import/export)
+- Use event delegation where possible.
+- Use requestAnimationFrame for smooth pan/zoom updates.
+- Keep everything in one JS file (app.js), but structured cleanly.
 
-2) UI updates (simple + fast)
-- In the Person Drawer, add an “Origin / Roots” section with inputs:
-  - Country (text + datalist suggestions derived from existing people + common countries)
-  - City (text + datalist suggestions derived from existing people)
-  - Area/Neighborhood (text)
-  - Family Branch/Label (text)
-  - Notes (textarea)
-- On each node card, show a small badge under the name:
-  - Prefer: originCity OR originCountry (whichever exists)
-  - If neither exists, show nothing
-- Add a settings toggle: “Hide origin badges” stored in localStorage and applied immediately.
+Deliverables
+- Provide updated full code for:
+  - app.html (or index.html—keep file name consistent; update README accordingly)
+  - styles.css
+  - app.js
+  - README.md
+- Include a short “Design system” section in README:
+  spacing, font sizes, colors, button styles.
 
-3) Filters
-- Add filter dropdowns:
-  - Filter by Country: All + unique countries derived from people data
-  - Filter by City: All + unique cities derived from people data (optionally dependent on selected country)
-- Filters must affect:
-  - Nodes visibility (and related edges visibility)
-  - Directory/list results if you have a people directory view
-- The tree view should still function with filters on (focus, pan/zoom).
-
-4) Copy origin helper (nice-to-have but implement)
-- Provide a “Copy origin from…” button/dropdown in the drawer:
-  - Choose an existing person and copy all origin fields to the currently selected person.
-
-Implementation details
-- Use a single data model in app.js like:
-  - state = {
-      dataVersion: 2,
-      ui: { hideOriginBadges: false, filterCountry: "All", filterCity: "All" },
-      people: [{ id, name, gender, birthYear, deathYear, notes, tag, x, y,
-                originCountry, originCity, originArea, originFamilyBranch, originNotes }],
-      relations: [{ id, type: "PARENT_CHILD"|"SPOUSE", aId, bId }]
-    }
-- Store to localStorage on every change (debounced).
-- Provide migration logic:
-  - If saved dataVersion missing or < 2, add missing fields and set dataVersion = 2.
-- Provide a small sample dataset function (3 generations) for demo, with mixed origins/cities.
-
-Export/Import requirements
-- Export JSON must include all fields (including origin + ui settings + dataVersion).
-- Import JSON must validate minimally and safely:
-  - If origin fields missing, set to "".
-  - If ui settings missing, set defaults.
-  - Never crash on unknown extra fields (ignore unknown keys).
-  - Validate that people ids are unique and relations refer to existing people; if not, skip invalid relations with a warning.
-
-README must include
-- How to run (double-click index.html)
-- How to export/import
-- Tips for building the tree
-- Origin/Roots fields + filtering instructions
-- Known limitations
-- “Next step” section: how we can later upgrade to Next.js + database + accounts
-
-Now output:
+Final output format
 1) File tree
-2) Full code for each file (index.html, styles.css, app.js, README.md)
-3) Final checklist to verify it works
+2) Full code for each file
+3) Final checklist for testing:
+   - add/edit/delete person
+   - add parent/child/spouse (create + link existing)
+   - search + filters
+   - export/import
+   - print
+   - settings toggles
+   - pan/zoom + fit to screen
