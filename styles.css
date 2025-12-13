@@ -34,11 +34,18 @@
     --color-border: #e0e0e0;
     --color-border-light: #f0f0f0;
 
-    /* Gender colors */
-    --color-male: #e3f2fd;
-    --color-male-border: #1976d2;
-    --color-female: #fce4ec;
-    --color-female-border: #c2185b;
+    /* Gender colors - softer, less saturated */
+    --color-male: #e8f4fc;
+    --color-male-border: #5c9fd4;
+    --color-male-hover: #d4e9f7;
+    --color-female: #fdf0f4;
+    --color-female-border: #d47a9a;
+    --color-female-hover: #f9e0e8;
+
+    /* Edge colors */
+    --color-edge-parent: #78909c;
+    --color-edge-spouse: #ce93d8;
+    --color-edge-highlight: #2c5f2d;
 
     /* Spacing */
     --spacing-xs: 4px;
@@ -571,7 +578,7 @@ body {
 }
 
 /* ============================================
-   Tree Nodes and Edges
+   Tree Nodes and Edges - Improved
    ============================================ */
 .node-group {
     cursor: pointer;
@@ -584,36 +591,41 @@ body {
 .node-rect {
     fill: var(--color-surface);
     stroke: var(--color-border);
-    stroke-width: 2;
+    stroke-width: 1.5;
     filter: url(#nodeShadow);
-    transition: stroke-width 150ms ease, stroke 150ms ease;
+    transition: all 150ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .node-rect.node-male {
     fill: var(--color-male);
     stroke: var(--color-male-border);
+    stroke-width: 1.5;
 }
 
 .node-rect.node-female {
     fill: var(--color-female);
     stroke: var(--color-female-border);
+    stroke-width: 1.5;
 }
 
 .node:hover .node-rect {
-    stroke-width: 2.5;
+    stroke-width: 2;
+    filter: url(#nodeSelectedShadow);
 }
 
 .node:hover .node-rect.node-male {
-    stroke: #1565c0;
+    stroke: var(--color-male-border);
+    fill: var(--color-male-hover);
 }
 
 .node:hover .node-rect.node-female {
-    stroke: #ad1457;
+    stroke: var(--color-female-border);
+    fill: var(--color-female-hover);
 }
 
 .node.selected .node-rect {
     stroke: var(--color-primary);
-    stroke-width: 3;
+    stroke-width: 2.5;
     filter: url(#nodeSelectedShadow);
 }
 
@@ -624,64 +636,168 @@ body {
 
 .node.dragging .node-rect {
     stroke: var(--color-primary);
-    stroke-width: 3;
+    stroke-width: 2.5;
 }
 
+/* Node text with ellipsis support */
 .node-name {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     fill: var(--color-text);
     pointer-events: none;
+    dominant-baseline: middle;
 }
 
 .node-years {
-    font-size: 11px;
+    font-size: 10px;
     fill: var(--color-text-secondary);
     pointer-events: none;
 }
 
 .node-origin {
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 500;
     fill: var(--color-primary);
     pointer-events: none;
 }
 
-/* Edges */
+/* SVG Tooltip */
+.node-tooltip {
+    position: fixed;
+    background: rgba(30, 30, 30, 0.95);
+    color: white;
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    pointer-events: none;
+    z-index: 1000;
+    white-space: nowrap;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    opacity: 0;
+    transition: opacity 150ms ease;
+}
+
+.node-tooltip.visible {
+    opacity: 1;
+}
+
+/* Edges - Orthogonal connectors */
 .edge {
-    stroke: var(--color-info);
-    stroke-width: 3;
     fill: none;
     stroke-linecap: round;
     stroke-linejoin: round;
-    cursor: pointer;
-    transition: stroke-width 150ms ease, stroke 150ms ease, opacity 150ms ease;
-}
-
-.edge:hover {
-    stroke-width: 5;
-    opacity: 0.8;
+    pointer-events: stroke;
+    transition: stroke 150ms ease, stroke-width 150ms ease;
 }
 
 .parent-child-edge {
-    stroke: #2196F3;
-    stroke-width: 3;
+    stroke: var(--color-edge-parent);
+    stroke-width: 1.5;
 }
 
-.parent-child-edge:hover {
-    stroke: #1565c0;
-    stroke-width: 5;
+.parent-child-edge.tree-vertical {
+    stroke: var(--color-edge-parent);
+    stroke-width: 1.5;
+}
+
+.parent-child-edge.tree-horizontal {
+    stroke: var(--color-edge-parent);
+    stroke-width: 1.5;
+}
+
+.parent-child-edge.highlighted {
+    stroke: var(--color-edge-highlight);
+    stroke-width: 2.5;
 }
 
 .spouse-edge {
-    stroke: #e91e63;
-    stroke-dasharray: 8, 5;
-    stroke-width: 3;
+    stroke: var(--color-edge-spouse);
+    stroke-dasharray: 4, 3;
+    stroke-width: 1.5;
 }
 
-.spouse-edge:hover {
-    stroke: #c2185b;
-    stroke-width: 5;
+.spouse-edge.highlighted {
+    stroke: var(--color-edge-highlight);
+    stroke-width: 2;
+    stroke-dasharray: none;
+}
+
+/* Dimmed edges when a person is selected */
+.edge.dimmed {
+    opacity: 0.25;
+}
+
+/* ============================================
+   Layout Options Panel
+   ============================================ */
+.layout-options-panel {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    padding: var(--spacing-md);
+    margin-top: var(--spacing-sm);
+    z-index: var(--z-dropdown);
+    min-width: 180px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.layout-options-panel.hidden {
+    display: none;
+}
+
+.layout-option-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+}
+
+.layout-option-label {
+    font-size: var(--font-size-sm);
+    font-weight: 500;
+    color: var(--color-text-secondary);
+    margin-bottom: var(--spacing-xs);
+}
+
+.spacing-toggle {
+    display: flex;
+    gap: var(--spacing-xs);
+    background: var(--color-bg);
+    padding: 3px;
+    border-radius: 6px;
+}
+
+.spacing-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 10px;
+    border: none;
+    background: transparent;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    flex: 1;
+    justify-content: center;
+}
+
+.spacing-btn:hover {
+    color: var(--color-text);
+}
+
+.spacing-btn.active {
+    background: var(--color-surface);
+    color: var(--color-primary);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.spacing-btn svg {
+    flex-shrink: 0;
 }
 
 /* ============================================

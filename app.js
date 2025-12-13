@@ -746,6 +746,23 @@ function initializeUI() {
   document
     .getElementById("autoArrangeBtnToolbar")
     .addEventListener("click", autoArrangeTree);
+
+  // Fit to screen button in toolbar
+  document
+    .getElementById("fitScreenBtnToolbar")
+    .addEventListener("click", fitTreeToScreen);
+
+  // Layout options panel
+  document
+    .getElementById("layoutOptionsBtn")
+    .addEventListener("click", toggleLayoutOptionsPanel);
+  document
+    .getElementById("compactSpacingBtn")
+    .addEventListener("click", () => setLayoutMode("compact"));
+  document
+    .getElementById("comfortableSpacingBtn")
+    .addEventListener("click", () => setLayoutMode("comfortable"));
+
   document.getElementById("exportBtn").addEventListener("click", exportData);
   document
     .getElementById("importBtn")
@@ -979,10 +996,18 @@ function openRelationshipModal(type, personId) {
 function toggleFilterPanel() {
   document.getElementById("filterPanel").classList.toggle("hidden");
   document.getElementById("moreMenu").classList.add("hidden");
+  document.getElementById("layoutOptionsPanel").classList.add("hidden");
 }
 
 function toggleMoreMenu() {
   document.getElementById("moreMenu").classList.toggle("hidden");
+  document.getElementById("filterPanel").classList.add("hidden");
+  document.getElementById("layoutOptionsPanel").classList.add("hidden");
+}
+
+function toggleLayoutOptionsPanel() {
+  document.getElementById("layoutOptionsPanel").classList.toggle("hidden");
+  document.getElementById("moreMenu").classList.add("hidden");
   document.getElementById("filterPanel").classList.add("hidden");
 }
 
@@ -990,6 +1015,7 @@ function closeAllModals() {
   document.querySelectorAll(".modal").forEach((m) => m.classList.add("hidden"));
   document.getElementById("filterPanel").classList.add("hidden");
   document.getElementById("moreMenu").classList.add("hidden");
+  document.getElementById("layoutOptionsPanel").classList.add("hidden");
 }
 
 // ===== HANDLERS =====
@@ -1167,19 +1193,60 @@ function showConfirm(title, message, callback) {
   document.getElementById("confirmModal").classList.remove("hidden");
 }
 
-// ===== AUTO ARRANGE LAYOUT ALGORITHM =====
-// Layout constants
-const LAYOUT = {
-  NODE_WIDTH: 140,
-  NODE_HEIGHT: 70,
-  H_GAP: 50, // Horizontal gap between sibling groups
-  V_GAP: 120, // Vertical gap between generations
-  SPOUSE_GAP: 20, // Gap between spouses
-  PADDING: 100, // Canvas padding
+// ===== LAYOUT CONFIGURATION =====
+// Centralized layout constants - easy to modify
+const LAYOUT_CONFIG = {
+  // Compact mode (default)
+  compact: {
+    NODE_WIDTH: 130,
+    NODE_HEIGHT: 60,
+    H_GAP: 25, // Horizontal gap between siblings
+    V_GAP: 90, // Vertical gap between generations
+    SPOUSE_GAP: 8, // Gap between spouses
+    PADDING: 60, // Canvas padding
+    FAMILY_GAP: 100, // Gap between separate family trees
+  },
+  // Comfortable mode
+  comfortable: {
+    NODE_WIDTH: 150,
+    NODE_HEIGHT: 70,
+    H_GAP: 50,
+    V_GAP: 120,
+    SPOUSE_GAP: 20,
+    PADDING: 80,
+    FAMILY_GAP: 150,
+  },
 };
 
+// Current layout mode
+let currentLayoutMode = "compact";
+
+// Active layout constants (will be set based on mode)
+let LAYOUT = { ...LAYOUT_CONFIG.compact };
+
 /**
- * Main function to auto-arrange the tree - Top to Bottom layout
+ * Switch layout mode between compact and comfortable
+ */
+function setLayoutMode(mode) {
+  if (LAYOUT_CONFIG[mode]) {
+    currentLayoutMode = mode;
+    LAYOUT = { ...LAYOUT_CONFIG[mode] };
+
+    // Update button states
+    document.querySelectorAll(".spacing-btn").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.mode === mode);
+    });
+
+    // Re-arrange if there are people
+    if (state.people.length > 0) {
+      autoArrangeTree();
+    }
+  }
+}
+
+/**
+ * Main function to auto-arrange the tree using improved Reingold-Tilford style algorithm
+ * Optimized for family trees with couples treated as units
  */
 function autoArrangeTree() {
   if (state.people.length === 0) {
@@ -1189,40 +1256,78 @@ function autoArrangeTree() {
 
   closeAllModals();
 
-  // Build the family graph structure
+  // Build indexed graph structure for O(1) lookups
   const graph = buildFamilyGraph();
 
-  // Find the true roots - people who have no parents AND whose spouse also has no parents
-  // OR people who have no parents and no spouse
-  const rootPeople = findTrueRoots(graph);
+  // Find all connected components (separate family trees)
+  const components = findConnectedComponents(graph);
 
-  // Position all nodes using BFS from roots
-  const positioned = new Set();
-  let currentX = LAYOUT.PADDING;
+  // Sort components by size (largest first)
+  components.sort((a, b) => b.length - a.length);
 
-  rootPeople.forEach((rootId) => {
-    if (positioned.has(rootId)) return;
+  // Track all positioned nodes with their final x,y
+  const positioned = new Map(); // personId -> {x, y}
+  let currentY = LAYOUT.PADDING;
 
-    const width = positionSubtree(
-      graph,
-      rootId,
-      currentX,
-      LAYOUT.PADDING,
-      positioned
-    );
-    currentX += width + LAYOUT.H_GAP * 2;
+  // Position each family tree component
+  components.forEach((component) => {
+    // Find roots in this component (people with no parents)
+    const componentRoots = findComponentRoots(graph, component);
+    if (componentRoots.length === 0) return;
+
+    // Use the improved tidy-tree algorithm for this component
+    const subtrees = [];
+    const processedInComponent = new Set();
+
+    componentRoots.forEach((rootId) => {
+      if (processedInComponent.has(rootId)) return;
+
+      // Build and position subtree
+      const tree = buildSubtreeStructure(graph, rootId, processedInComponent);
+      if (tree) {
+        // First pass: compute preliminary x positions
+        firstWalk(tree, graph);
+        // Second pass: compute final positions
+        secondWalk(tree, 0, currentY);
+        subtrees.push(tree);
+      }
+    });
+
+    // Merge subtrees horizontally with proper spacing
+    let subtreeOffsetX = LAYOUT.PADDING;
+    subtrees.forEach((tree) => {
+      const bounds = getTreeBounds(tree);
+      const shiftX = subtreeOffsetX - bounds.minX;
+      shiftTree(tree, shiftX, 0);
+      subtreeOffsetX = bounds.maxX + shiftX + LAYOUT.H_GAP;
+
+      // Apply positions to actual people
+      applyTreePositions(tree, positioned);
+    });
+
+    // Find max Y for next component
+    let maxY = currentY;
+    component.forEach((personId) => {
+      const pos = positioned.get(personId);
+      if (pos) {
+        maxY = Math.max(maxY, pos.y);
+      }
+    });
+    currentY = maxY + LAYOUT.FAMILY_GAP;
   });
 
-  // Handle any unpositioned people (disconnected nodes)
-  state.people.forEach((p) => {
-    if (!positioned.has(p.id)) {
-      p.x = currentX + LAYOUT.NODE_WIDTH / 2;
-      p.y = LAYOUT.PADDING;
-      p.hasManualPos = false;
-      positioned.add(p.id);
-      currentX += LAYOUT.NODE_WIDTH + LAYOUT.H_GAP;
+  // Apply final positions to state
+  positioned.forEach((pos, personId) => {
+    const person = state.people.find((p) => p.id === personId);
+    if (person) {
+      person.x = pos.x;
+      person.y = pos.y;
+      person.hasManualPos = false;
     }
   });
+
+  // Ensure all nodes are within bounds
+  normalizePositions();
 
   // Render and fit
   renderTree();
@@ -1232,6 +1337,568 @@ function autoArrangeTree() {
 
   debouncedSave();
   showToast("Tree arranged", "success");
+}
+
+/**
+ * Build a tree structure node for layout algorithm
+ */
+function buildSubtreeStructure(graph, personId, processed) {
+  if (processed.has(personId)) return null;
+
+  const person = state.people.find((p) => p.id === personId);
+  if (!person) return null;
+
+  // Create node for this person (and spouse if any)
+  const spouses = (graph.spouseOf.get(personId) || []).filter(
+    (s) => !processed.has(s)
+  );
+  const familyMembers = [personId, ...spouses];
+
+  // Mark all family members as processed
+  familyMembers.forEach((m) => processed.add(m));
+
+  // Create the tree node
+  const node = {
+    id: personId,
+    members: familyMembers, // All people in this "unit" (person + spouses)
+    children: [],
+    width:
+      familyMembers.length * LAYOUT.NODE_WIDTH +
+      (familyMembers.length - 1) * LAYOUT.SPOUSE_GAP,
+    x: 0,
+    y: 0,
+    mod: 0, // Modifier for second pass
+    prelim: 0, // Preliminary x position
+    change: 0,
+    shift: 0,
+    thread: null,
+    ancestor: null,
+    number: 0,
+  };
+  node.ancestor = node;
+
+  // Get all children of this family unit
+  const allChildren = new Set();
+  familyMembers.forEach((memberId) => {
+    const children = graph.parentOf.get(memberId) || [];
+    children.forEach((childId) => {
+      if (!processed.has(childId)) {
+        allChildren.add(childId);
+      }
+    });
+  });
+
+  // Build child subtrees
+  let childNumber = 0;
+  allChildren.forEach((childId) => {
+    const childTree = buildSubtreeStructure(graph, childId, processed);
+    if (childTree) {
+      childTree.number = childNumber++;
+      childTree.parent = node;
+      node.children.push(childTree);
+    }
+  });
+
+  return node;
+}
+
+/**
+ * First walk of Reingold-Tilford: assign preliminary x positions
+ */
+function firstWalk(node, graph) {
+  if (node.children.length === 0) {
+    // Leaf node
+    if (node.number > 0 && node.parent) {
+      const leftSibling = node.parent.children[node.number - 1];
+      node.prelim =
+        leftSibling.prelim +
+        leftSibling.width / 2 +
+        LAYOUT.H_GAP +
+        node.width / 2;
+    } else {
+      node.prelim = 0;
+    }
+  } else {
+    // Internal node
+    let defaultAncestor = node.children[0];
+
+    node.children.forEach((child, i) => {
+      firstWalk(child, graph);
+      defaultAncestor = apportion(child, defaultAncestor, node);
+    });
+
+    executeShifts(node);
+
+    const firstChild = node.children[0];
+    const lastChild = node.children[node.children.length - 1];
+    const midpoint = (firstChild.prelim + lastChild.prelim) / 2;
+
+    if (node.number > 0 && node.parent) {
+      const leftSibling = node.parent.children[node.number - 1];
+      node.prelim =
+        leftSibling.prelim +
+        leftSibling.width / 2 +
+        LAYOUT.H_GAP +
+        node.width / 2;
+      node.mod = node.prelim - midpoint;
+    } else {
+      node.prelim = midpoint;
+    }
+  }
+}
+
+/**
+ * Apportion function for Reingold-Tilford algorithm
+ */
+function apportion(node, defaultAncestor, parent) {
+  if (node.number > 0) {
+    const leftSibling = parent.children[node.number - 1];
+
+    let vir = node; // right inner
+    let vor = node; // right outer
+    let vil = leftSibling; // left inner
+    let vol = parent.children[0]; // left outer
+
+    let sir = node.mod;
+    let sor = node.mod;
+    let sil = vil.mod;
+    let sol = vol.mod;
+
+    while (nextRight(vil) && nextLeft(vir)) {
+      vil = nextRight(vil);
+      vir = nextLeft(vir);
+      vol = nextLeft(vol);
+      vor = nextRight(vor);
+
+      if (vor) vor.ancestor = node;
+
+      const shift =
+        vil.prelim +
+        sil -
+        (vir.prelim + sir) +
+        vil.width / 2 +
+        LAYOUT.H_GAP +
+        vir.width / 2;
+
+      if (shift > 0) {
+        const anc = ancestor(vil, node, defaultAncestor);
+        moveSubtree(anc, node, shift);
+        sir += shift;
+        sor += shift;
+      }
+
+      sil += vil ? vil.mod : 0;
+      sir += vir ? vir.mod : 0;
+      sol += vol ? vol.mod : 0;
+      sor += vor ? vor.mod : 0;
+    }
+
+    if (nextRight(vil) && !nextRight(vor)) {
+      if (vor) {
+        vor.thread = nextRight(vil);
+        vor.mod += sil - sor;
+      }
+    }
+
+    if (nextLeft(vir) && !nextLeft(vol)) {
+      if (vol) {
+        vol.thread = nextLeft(vir);
+        vol.mod += sir - sol;
+      }
+      defaultAncestor = node;
+    }
+  }
+
+  return defaultAncestor;
+}
+
+function nextLeft(node) {
+  return node.children.length > 0 ? node.children[0] : node.thread;
+}
+
+function nextRight(node) {
+  return node.children.length > 0
+    ? node.children[node.children.length - 1]
+    : node.thread;
+}
+
+function ancestor(vil, node, defaultAncestor) {
+  if (vil.ancestor && vil.ancestor.parent === node.parent) {
+    return vil.ancestor;
+  }
+  return defaultAncestor;
+}
+
+function moveSubtree(wl, wr, shift) {
+  const subtrees = wr.number - wl.number;
+  if (subtrees > 0) {
+    wr.change -= shift / subtrees;
+    wr.shift += shift;
+    wl.change += shift / subtrees;
+    wr.prelim += shift;
+    wr.mod += shift;
+  }
+}
+
+function executeShifts(node) {
+  let shift = 0;
+  let change = 0;
+  for (let i = node.children.length - 1; i >= 0; i--) {
+    const child = node.children[i];
+    child.prelim += shift;
+    child.mod += shift;
+    change += child.change;
+    shift += child.shift + change;
+  }
+}
+
+/**
+ * Second walk: apply modifiers to get final x positions
+ */
+function secondWalk(node, modSum, y) {
+  node.x = node.prelim + modSum;
+  node.y = y;
+
+  node.children.forEach((child) => {
+    secondWalk(child, modSum + node.mod, y + LAYOUT.V_GAP);
+  });
+}
+
+/**
+ * Get the bounding box of a tree
+ */
+function getTreeBounds(node) {
+  let minX = node.x - node.width / 2;
+  let maxX = node.x + node.width / 2;
+  let minY = node.y;
+  let maxY = node.y;
+
+  node.children.forEach((child) => {
+    const childBounds = getTreeBounds(child);
+    minX = Math.min(minX, childBounds.minX);
+    maxX = Math.max(maxX, childBounds.maxX);
+    minY = Math.min(minY, childBounds.minY);
+    maxY = Math.max(maxY, childBounds.maxY);
+  });
+
+  return { minX, maxX, minY, maxY };
+}
+
+/**
+ * Shift entire tree by dx, dy
+ */
+function shiftTree(node, dx, dy) {
+  node.x += dx;
+  node.y += dy;
+  node.children.forEach((child) => shiftTree(child, dx, dy));
+}
+
+/**
+ * Apply tree positions to the positioned map
+ */
+function applyTreePositions(node, positioned) {
+  // Position each family member
+  const memberCount = node.members.length;
+  const totalWidth =
+    memberCount * LAYOUT.NODE_WIDTH + (memberCount - 1) * LAYOUT.SPOUSE_GAP;
+  const startX = node.x - totalWidth / 2 + LAYOUT.NODE_WIDTH / 2;
+
+  node.members.forEach((memberId, idx) => {
+    positioned.set(memberId, {
+      x: startX + idx * (LAYOUT.NODE_WIDTH + LAYOUT.SPOUSE_GAP),
+      y: node.y,
+    });
+  });
+
+  // Recurse to children
+  node.children.forEach((child) => applyTreePositions(child, positioned));
+}
+
+/**
+ * Find all connected components (separate family trees)
+ */
+function findConnectedComponents(graph) {
+  const visited = new Set();
+  const components = [];
+
+  graph.nodes.forEach((node, id) => {
+    if (visited.has(id)) return;
+
+    // BFS to find all connected people
+    const component = [];
+    const queue = [id];
+
+    while (queue.length > 0) {
+      const currentId = queue.shift();
+      if (visited.has(currentId)) continue;
+
+      visited.add(currentId);
+      component.push(currentId);
+
+      // Add all connected people (parents, children, spouses)
+      const parents = graph.childOf.get(currentId) || [];
+      const children = graph.parentOf.get(currentId) || [];
+      const spouses = graph.spouseOf.get(currentId) || [];
+
+      [...parents, ...children, ...spouses].forEach((connectedId) => {
+        if (!visited.has(connectedId)) {
+          queue.push(connectedId);
+        }
+      });
+    }
+
+    if (component.length > 0) {
+      components.push(component);
+    }
+  });
+
+  return components;
+}
+
+/**
+ * Find root people within a component
+ */
+function findComponentRoots(graph, component) {
+  const componentSet = new Set(component);
+  const roots = [];
+  const visited = new Set();
+
+  component.forEach((id) => {
+    if (visited.has(id)) return;
+
+    const parents = graph.childOf.get(id) || [];
+    const hasParentsInComponent = parents.some((p) => componentSet.has(p));
+
+    if (!hasParentsInComponent) {
+      // Check if spouse has parents
+      const spouses = graph.spouseOf.get(id) || [];
+      let spouseHasParents = false;
+
+      for (const spouseId of spouses) {
+        if (componentSet.has(spouseId)) {
+          const spouseParents = graph.childOf.get(spouseId) || [];
+          if (spouseParents.some((p) => componentSet.has(p))) {
+            spouseHasParents = true;
+            break;
+          }
+        }
+      }
+
+      if (!spouseHasParents) {
+        roots.push(id);
+        visited.add(id);
+        spouses.forEach((s) => {
+          if (componentSet.has(s)) visited.add(s);
+        });
+      }
+    }
+  });
+
+  return roots;
+}
+
+/**
+ * Position a subtree vertically (top to bottom)
+ */
+function positionSubtreeVertical(graph, personId, minX, maxX, y, positioned) {
+  if (positioned.has(personId)) return;
+
+  // Get all family members at this level (person + spouse(s))
+  const familyMembers = [personId];
+  const spouses = graph.spouseOf.get(personId) || [];
+  spouses.forEach((s) => {
+    if (!familyMembers.includes(s) && !positioned.has(s)) {
+      familyMembers.push(s);
+    }
+  });
+
+  // Calculate parent family width
+  const parentWidth =
+    familyMembers.length * LAYOUT.NODE_WIDTH +
+    (familyMembers.length - 1) * LAYOUT.SPOUSE_GAP;
+
+  // Position parents centered in their range
+  const centerX = (minX + maxX) / 2;
+  const parentStartX = centerX - parentWidth / 2;
+
+  familyMembers.forEach((memberId, idx) => {
+    const person = state.people.find((p) => p.id === memberId);
+    if (person) {
+      person.x =
+        parentStartX +
+        idx * (LAYOUT.NODE_WIDTH + LAYOUT.SPOUSE_GAP) +
+        LAYOUT.NODE_WIDTH / 2;
+      person.y = y;
+      person.hasManualPos = false;
+      positioned.add(memberId);
+    }
+  });
+
+  // Get all children of this family
+  const allChildren = [];
+  familyMembers.forEach((memberId) => {
+    const children = graph.parentOf.get(memberId) || [];
+    children.forEach((childId) => {
+      if (!allChildren.includes(childId) && !positioned.has(childId)) {
+        allChildren.push(childId);
+      }
+    });
+  });
+
+  // Position children
+  if (allChildren.length > 0) {
+    const childY = y + LAYOUT.V_GAP;
+
+    // Calculate width for each child subtree
+    const childWidths = allChildren.map((childId) => ({
+      childId,
+      width: calculateSubtreeWidth(graph, childId, new Set(positioned)),
+    }));
+
+    const totalChildrenWidth =
+      childWidths.reduce((sum, c) => sum + c.width, 0) +
+      (allChildren.length - 1) * LAYOUT.H_GAP;
+
+    // Start children centered under parents
+    let childStartX = centerX - totalChildrenWidth / 2;
+
+    // Make sure we don't go below minX
+    if (childStartX < LAYOUT.PADDING) {
+      childStartX = LAYOUT.PADDING;
+    }
+
+    childWidths.forEach(({ childId, width }) => {
+      positionSubtreeVertical(
+        graph,
+        childId,
+        childStartX,
+        childStartX + width,
+        childY,
+        positioned
+      );
+      childStartX += width + LAYOUT.H_GAP;
+    });
+  }
+}
+
+/**
+ * Simple positioning - position a person within a given X range
+ */
+function positionSubtreeSimple(graph, personId, minX, maxX, y, positioned) {
+  if (positioned.has(personId)) return;
+
+  // Get all family members at this level (person + spouse(s))
+  const familyMembers = [personId];
+  const spouses = graph.spouseOf.get(personId) || [];
+  spouses.forEach((s) => {
+    if (!familyMembers.includes(s) && !positioned.has(s)) {
+      familyMembers.push(s);
+    }
+  });
+
+  // Calculate parent family width
+  const parentWidth =
+    familyMembers.length * LAYOUT.NODE_WIDTH +
+    (familyMembers.length - 1) * LAYOUT.SPOUSE_GAP;
+
+  // Position parents centered in their range
+  const centerX = (minX + maxX) / 2;
+  const parentStartX = centerX - parentWidth / 2;
+
+  familyMembers.forEach((memberId, idx) => {
+    const person = state.people.find((p) => p.id === memberId);
+    if (person) {
+      person.x =
+        parentStartX +
+        idx * (LAYOUT.NODE_WIDTH + LAYOUT.SPOUSE_GAP) +
+        LAYOUT.NODE_WIDTH / 2;
+      person.y = y;
+      person.hasManualPos = false;
+      positioned.add(memberId);
+    }
+  });
+
+  // Get all children of this family
+  const allChildren = [];
+  familyMembers.forEach((memberId) => {
+    const children = graph.parentOf.get(memberId) || [];
+    children.forEach((childId) => {
+      if (!allChildren.includes(childId) && !positioned.has(childId)) {
+        allChildren.push(childId);
+      }
+    });
+  });
+
+  // Position children
+  if (allChildren.length > 0) {
+    const childY = y + LAYOUT.V_GAP;
+
+    // Calculate width for each child subtree
+    const childWidths = allChildren.map((childId) => ({
+      childId,
+      width: calculateSubtreeWidth(graph, childId, new Set(positioned)),
+    }));
+
+    const totalChildrenWidth =
+      childWidths.reduce((sum, c) => sum + c.width, 0) +
+      (allChildren.length - 1) * LAYOUT.H_GAP;
+
+    // Start children from left, centered under parents
+    let childStartX = centerX - totalChildrenWidth / 2;
+
+    // Make sure we don't go below minX
+    if (childStartX < minX) {
+      childStartX = minX;
+    }
+
+    childWidths.forEach(({ childId, width }) => {
+      positionSubtreeSimple(
+        graph,
+        childId,
+        childStartX,
+        childStartX + width,
+        childY,
+        positioned
+      );
+      childStartX += width + LAYOUT.H_GAP;
+    });
+  }
+}
+
+/**
+ * Ensure all nodes have positive coordinates with proper padding
+ */
+function normalizePositions() {
+  if (state.people.length === 0) return;
+
+  // Find minimum x and y
+  let minX = Infinity;
+  let minY = Infinity;
+
+  state.people.forEach((p) => {
+    if (p.x !== undefined && p.x !== null) {
+      minX = Math.min(minX, p.x - LAYOUT.NODE_WIDTH / 2);
+    }
+    if (p.y !== undefined && p.y !== null) {
+      minY = Math.min(minY, p.y - LAYOUT.NODE_HEIGHT / 2);
+    }
+  });
+
+  // Calculate shift needed to ensure all nodes are within bounds
+  const shiftX = minX < LAYOUT.PADDING ? LAYOUT.PADDING - minX : 0;
+  const shiftY = minY < LAYOUT.PADDING ? LAYOUT.PADDING - minY : 0;
+
+  // Apply shift to all nodes
+  if (shiftX > 0 || shiftY > 0) {
+    state.people.forEach((p) => {
+      if (p.x !== undefined && p.x !== null) {
+        p.x += shiftX;
+      }
+      if (p.y !== undefined && p.y !== null) {
+        p.y += shiftY;
+      }
+    });
+  }
 }
 
 /**
@@ -1348,7 +2015,11 @@ function positionSubtree(graph, personId, startX, y, positioned) {
   // Now position children
   if (allChildren.length > 0) {
     const childY = y + LAYOUT.V_GAP;
-    let childStartX = parentCenterX - totalChildrenWidth / 2;
+    // Ensure children start at least at LAYOUT.PADDING
+    let childStartX = Math.max(
+      LAYOUT.PADDING,
+      parentCenterX - totalChildrenWidth / 2
+    );
 
     childWidths.forEach(({ childId, width }) => {
       positionSubtree(graph, childId, childStartX, childY, positioned);
@@ -1765,52 +2436,237 @@ function getFilteredPeople() {
 function renderEdges(g, filteredPeople) {
   const filteredIds = new Set(filteredPeople.map((p) => p.id));
 
-  state.relations.forEach((rel) => {
+  // Build a set of related person IDs for highlighting
+  const relatedIds = new Set();
+  if (selectedPersonId) {
+    relatedIds.add(selectedPersonId);
+    state.relations.forEach((rel) => {
+      if (rel.aId === selectedPersonId) relatedIds.add(rel.bId);
+      if (rel.bId === selectedPersonId) relatedIds.add(rel.aId);
+    });
+  }
+
+  // Separate relationship types
+  const parentChildRels = state.relations.filter(
+    (rel) => rel.type === "PARENT_CHILD"
+  );
+  const spouseRels = state.relations.filter((rel) => rel.type === "SPOUSE");
+
+  // Group children by their parent families
+  const familyToChildren = new Map();
+  const processedChildren = new Set();
+
+  parentChildRels.forEach((rel) => {
+    if (!filteredIds.has(rel.aId) || !filteredIds.has(rel.bId)) return;
+    if (processedChildren.has(rel.bId)) return;
+
+    const parent = state.people.find((p) => p.id === rel.aId);
+    if (!parent) return;
+
+    // Find all parents of this child
+    const childParents = parentChildRels
+      .filter((r) => r.bId === rel.bId && filteredIds.has(r.aId))
+      .map((r) => r.aId)
+      .sort();
+
+    const familyKey = childParents.join("-");
+
+    if (!familyToChildren.has(familyKey)) {
+      familyToChildren.set(familyKey, {
+        parents: childParents,
+        children: [],
+      });
+    }
+
+    if (!familyToChildren.get(familyKey).children.includes(rel.bId)) {
+      familyToChildren.get(familyKey).children.push(rel.bId);
+    }
+    processedChildren.add(rel.bId);
+  });
+
+  // Render spouse connections first (behind parent-child lines)
+  spouseRels.forEach((rel) => {
     if (!filteredIds.has(rel.aId) || !filteredIds.has(rel.bId)) return;
 
     const pA = state.people.find((p) => p.id === rel.aId);
     const pB = state.people.find((p) => p.id === rel.bId);
     if (!pA || !pB) return;
 
-    // Create curved path for better visualization
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
 
-    const x1 = pA.x;
-    const y1 = pA.y;
-    const x2 = pB.x;
-    const y2 = pB.y;
+    // Determine if this edge should be highlighted
+    const isHighlighted =
+      selectedPersonId &&
+      (rel.aId === selectedPersonId || rel.bId === selectedPersonId);
+    const isDimmed = selectedPersonId && !isHighlighted;
 
-    // Calculate control points for bezier curve
-    const midY = (y1 + y2) / 2;
-    const dx = Math.abs(x2 - x1);
-    const dy = Math.abs(y2 - y1);
-
+    const dx = Math.abs(pB.x - pA.x);
+    const dy = Math.abs(pB.y - pA.y);
     let d;
-    if (rel.type === "SPOUSE") {
-      // Horizontal curve for spouse relationships
-      const curveOffset = Math.min(30, dy / 2);
-      d = `M ${x1} ${y1} Q ${(x1 + x2) / 2} ${
-        Math.min(y1, y2) - curveOffset
-      } ${x2} ${y2}`;
+
+    if (dy < 20) {
+      // Same level - simple horizontal line
+      d = `M ${pA.x} ${pA.y} L ${pB.x} ${pB.y}`;
     } else {
-      // Vertical curve for parent-child relationships
-      const controlY1 = y1 + (y2 - y1) * 0.4;
-      const controlY2 = y1 + (y2 - y1) * 0.6;
-      d = `M ${x1} ${y1} C ${x1} ${controlY1} ${x2} ${controlY2} ${x2} ${y2}`;
+      // Different levels - use orthogonal (right-angle) connector
+      // Draw: horizontal from A, then vertical, then horizontal to B
+      const midX = (pA.x + pB.x) / 2;
+      d = `M ${pA.x} ${pA.y} L ${midX} ${pA.y} L ${midX} ${pB.y} L ${pB.x} ${pB.y}`;
     }
 
     path.setAttribute("d", d);
-    path.classList.add(
-      "edge",
-      rel.type === "SPOUSE" ? "spouse-edge" : "parent-child-edge"
-    );
+    path.classList.add("edge", "spouse-edge");
+    if (isHighlighted) path.classList.add("highlighted");
+    if (isDimmed) path.classList.add("dimmed");
     path.dataset.relationId = rel.id;
-
     g.appendChild(path);
+  });
+
+  // Render parent-child relationships with orthogonal (90-degree) connectors
+  familyToChildren.forEach((family) => {
+    const parents = family.parents
+      .map((id) => state.people.find((p) => p.id === id))
+      .filter((p) => p);
+
+    const children = family.children
+      .map((id) => state.people.find((p) => p.id === id))
+      .filter((p) => p)
+      .sort((a, b) => a.x - b.x); // Sort by x position
+
+    if (parents.length === 0 || children.length === 0) return;
+
+    // Check if any parent or child is selected
+    const isHighlighted =
+      selectedPersonId &&
+      (family.parents.includes(selectedPersonId) ||
+        family.children.includes(selectedPersonId));
+    const isDimmed = selectedPersonId && !isHighlighted;
+
+    // Calculate parent center point
+    const parentXs = parents.map((p) => p.x);
+    const parentYs = parents.map((p) => p.y);
+    const parentCenterX = (Math.min(...parentXs) + Math.max(...parentXs)) / 2;
+    const parentBottomY = Math.max(...parentYs) + LAYOUT.NODE_HEIGHT / 2;
+
+    // Calculate children positions
+    const childYs = children.map((c) => c.y);
+    const childTopY = Math.min(...childYs) - LAYOUT.NODE_HEIGHT / 2;
+    const childrenXs = children.map((c) => c.x);
+    const minChildX = Math.min(...childrenXs);
+    const maxChildX = Math.max(...childrenXs);
+    const childrenCenterX = (minChildX + maxChildX) / 2;
+
+    // Calculate the vertical midpoint for the horizontal bar
+    const midY = parentBottomY + (childTopY - parentBottomY) / 2;
+
+    // Create orthogonal connectors
+    const createEdgePath = (d, additionalClass = "") => {
+      const path = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "path"
+      );
+      path.setAttribute("d", d);
+      path.classList.add("edge", "parent-child-edge");
+      if (additionalClass) path.classList.add(additionalClass);
+      if (isHighlighted) path.classList.add("highlighted");
+      if (isDimmed) path.classList.add("dimmed");
+      return path;
+    };
+
+    // Check if parent center is far from children center (needs routing)
+    const needsHorizontalRoute = Math.abs(parentCenterX - childrenCenterX) > 30;
+
+    if (children.length === 1) {
+      const child = children[0];
+
+      if (Math.abs(parentCenterX - child.x) < 10) {
+        // Direct vertical drop
+        g.appendChild(
+          createEdgePath(
+            `M ${parentCenterX} ${parentBottomY} L ${child.x} ${childTopY}`,
+            "tree-vertical"
+          )
+        );
+      } else {
+        // Orthogonal route: down, across, down
+        g.appendChild(
+          createEdgePath(
+            `M ${parentCenterX} ${parentBottomY} L ${parentCenterX} ${midY}`,
+            "tree-vertical"
+          )
+        );
+        g.appendChild(
+          createEdgePath(
+            `M ${parentCenterX} ${midY} L ${child.x} ${midY}`,
+            "tree-horizontal"
+          )
+        );
+        g.appendChild(
+          createEdgePath(
+            `M ${child.x} ${midY} L ${child.x} ${childTopY}`,
+            "tree-vertical"
+          )
+        );
+      }
+    } else {
+      // Multiple children
+
+      // 1. Vertical from parent center down to midpoint
+      g.appendChild(
+        createEdgePath(
+          `M ${parentCenterX} ${parentBottomY} L ${parentCenterX} ${midY}`,
+          "tree-vertical"
+        )
+      );
+
+      // 2. Connect to the horizontal bar if parent is offset
+      if (parentCenterX < minChildX) {
+        g.appendChild(
+          createEdgePath(
+            `M ${parentCenterX} ${midY} L ${minChildX} ${midY}`,
+            "tree-horizontal"
+          )
+        );
+      } else if (parentCenterX > maxChildX) {
+        g.appendChild(
+          createEdgePath(
+            `M ${parentCenterX} ${midY} L ${maxChildX} ${midY}`,
+            "tree-horizontal"
+          )
+        );
+      }
+
+      // 3. Horizontal bar spanning all children
+      g.appendChild(
+        createEdgePath(
+          `M ${minChildX} ${midY} L ${maxChildX} ${midY}`,
+          "tree-horizontal"
+        )
+      );
+
+      // 4. Vertical drops to each child
+      children.forEach((child) => {
+        g.appendChild(
+          createEdgePath(
+            `M ${child.x} ${midY} L ${child.x} ${childTopY}`,
+            "tree-vertical"
+          )
+        );
+      });
+    }
   });
 }
 
 function renderNodes(g, filteredPeople) {
+  // Create tooltip element if it doesn't exist
+  let tooltip = document.getElementById("nodeTooltip");
+  if (!tooltip) {
+    tooltip = document.createElement("div");
+    tooltip.id = "nodeTooltip";
+    tooltip.className = "node-tooltip";
+    document.body.appendChild(tooltip);
+  }
+
   filteredPeople.forEach((person) => {
     const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
     group.classList.add("node-group", "node");
@@ -1820,12 +2676,16 @@ function renderNodes(g, filteredPeople) {
       group.classList.add("selected");
     }
 
+    // Node rectangle with consistent sizing
+    const nodeWidth = LAYOUT.NODE_WIDTH;
+    const nodeHeight = LAYOUT.NODE_HEIGHT;
+
     const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-    rect.setAttribute("x", person.x - 60);
-    rect.setAttribute("y", person.y - 35);
-    rect.setAttribute("width", "120");
-    rect.setAttribute("height", "70");
-    rect.setAttribute("rx", "8");
+    rect.setAttribute("x", person.x - nodeWidth / 2);
+    rect.setAttribute("y", person.y - nodeHeight / 2);
+    rect.setAttribute("width", nodeWidth);
+    rect.setAttribute("height", nodeHeight);
+    rect.setAttribute("rx", "6");
     rect.classList.add(
       "node-rect",
       person.gender === "Male"
@@ -1835,29 +2695,40 @@ function renderNodes(g, filteredPeople) {
         : ""
     );
 
+    // Calculate max characters based on node width
+    const maxNameChars = Math.floor((nodeWidth - 16) / 7); // Approximate char width
+    const displayName = person.name || "";
+    const truncatedName =
+      displayName.length > maxNameChars
+        ? displayName.substring(0, maxNameChars - 1) + "…"
+        : displayName;
+
+    // Name text (centered)
     const name = document.createElementNS("http://www.w3.org/2000/svg", "text");
     name.setAttribute("x", person.x);
-    name.setAttribute("y", person.y - 5);
+    name.setAttribute("y", person.y - 8);
     name.setAttribute("text-anchor", "middle");
     name.classList.add("node-name");
-    name.textContent = (person.name || "").substring(0, 15);
+    name.textContent = truncatedName;
 
+    // Years text
     const years = document.createElementNS(
       "http://www.w3.org/2000/svg",
       "text"
     );
     years.setAttribute("x", person.x);
-    years.setAttribute("y", person.y + 10);
+    years.setAttribute("y", person.y + 6);
     years.setAttribute("text-anchor", "middle");
     years.classList.add("node-years");
     years.textContent = person.birthYear
-      ? `${person.birthYear}${person.deathYear ? `-${person.deathYear}` : ""}`
+      ? `${person.birthYear}${person.deathYear ? " – " + person.deathYear : ""}`
       : "";
 
     group.appendChild(rect);
     group.appendChild(name);
     group.appendChild(years);
 
+    // Origin badge (if enabled and has origin info)
     if (
       !state.ui.hideOriginBadges &&
       (person.originCity || person.originCountry)
@@ -1867,15 +2738,42 @@ function renderNodes(g, filteredPeople) {
         "text"
       );
       origin.setAttribute("x", person.x);
-      origin.setAttribute("y", person.y + 25);
+      origin.setAttribute("y", person.y + 18);
       origin.setAttribute("text-anchor", "middle");
       origin.classList.add("node-origin");
-      origin.textContent = (
-        person.originCity ||
-        person.originCountry ||
-        ""
-      ).substring(0, 12);
+
+      const originText = person.originCity || person.originCountry || "";
+      const maxOriginChars = Math.floor((nodeWidth - 16) / 6);
+      origin.textContent =
+        originText.length > maxOriginChars
+          ? originText.substring(0, maxOriginChars - 1) + "…"
+          : originText;
       group.appendChild(origin);
+    }
+
+    // Tooltip on hover (shows full name if truncated)
+    const showFullInfo = displayName.length > maxNameChars || person.notes;
+    if (showFullInfo) {
+      group.addEventListener("mouseenter", (e) => {
+        let tooltipText = displayName;
+        if (person.birthYear) {
+          tooltipText += ` (${person.birthYear}${
+            person.deathYear ? "–" + person.deathYear : ""
+          })`;
+        }
+        tooltip.textContent = tooltipText;
+        tooltip.classList.add("visible");
+
+        // Position tooltip
+        const rect = group.getBoundingClientRect();
+        tooltip.style.left =
+          rect.left + rect.width / 2 - tooltip.offsetWidth / 2 + "px";
+        tooltip.style.top = rect.top - tooltip.offsetHeight - 8 + "px";
+      });
+
+      group.addEventListener("mouseleave", () => {
+        tooltip.classList.remove("visible");
+      });
     }
 
     // Node mousedown for dragging
@@ -2441,22 +3339,46 @@ function updateZoomLevel() {
 }
 
 function fitTreeToScreen() {
-  if (state.people.length === 0) return;
+  if (state.people.length === 0) {
+    showToast("No tree to fit", "info");
+    return;
+  }
+
+  // Get bounding box of all nodes
   const xs = state.people.map((p) => p.x);
   const ys = state.people.map((p) => p.y);
-  const minX = Math.min(...xs) - 80;
-  const maxX = Math.max(...xs) + 80;
-  const minY = Math.min(...ys) - 50;
-  const maxY = Math.max(...ys) + 50;
-  const w = svgElement.clientWidth;
-  const h = svgElement.clientHeight;
-  const scaleX = w / (maxX - minX);
-  const scaleY = h / (maxY - minY);
-  viewState.scale = Math.min(scaleX, scaleY, 2);
+
+  const nodeHalfWidth = LAYOUT.NODE_WIDTH / 2;
+  const nodeHalfHeight = LAYOUT.NODE_HEIGHT / 2;
+
+  const minX = Math.min(...xs) - nodeHalfWidth - 40;
+  const maxX = Math.max(...xs) + nodeHalfWidth + 40;
+  const minY = Math.min(...ys) - nodeHalfHeight - 40;
+  const maxY = Math.max(...ys) + nodeHalfHeight + 40;
+
+  const treeWidth = maxX - minX;
+  const treeHeight = maxY - minY;
+
+  const viewportWidth = svgElement.clientWidth;
+  const viewportHeight = svgElement.clientHeight;
+
+  // Calculate scale to fit (with reasonable min/max)
+  const scaleX = viewportWidth / treeWidth;
+  const scaleY = viewportHeight / treeHeight;
+  const idealScale = Math.min(scaleX, scaleY);
+
+  // Clamp scale between 0.2 and 2.0 for readability
+  viewState.scale = Math.min(Math.max(idealScale * 0.9, 0.2), 2.0);
+
+  // Center the tree
+  const scaledWidth = treeWidth * viewState.scale;
+  const scaledHeight = treeHeight * viewState.scale;
+
   viewState.offsetX =
-    -minX * viewState.scale + (w - (maxX - minX) * viewState.scale) / 2;
+    (viewportWidth - scaledWidth) / 2 - minX * viewState.scale;
   viewState.offsetY =
-    -minY * viewState.scale + (h - (maxY - minY) * viewState.scale) / 2;
+    (viewportHeight - scaledHeight) / 2 - minY * viewState.scale;
+
   applyViewTransform();
   updateZoomLevel();
   closeAllModals();
@@ -2568,9 +3490,12 @@ function showToast(message, type = "info") {
 document.addEventListener("click", (e) => {
   if (
     !e.target.closest(".menu-container") &&
-    !e.target.closest(".filter-panel")
+    !e.target.closest(".filter-panel") &&
+    !e.target.closest(".layout-options-panel") &&
+    !e.target.closest("#layoutOptionsBtn")
   ) {
     document.getElementById("moreMenu").classList.add("hidden");
     document.getElementById("filterPanel").classList.add("hidden");
+    document.getElementById("layoutOptionsPanel").classList.add("hidden");
   }
 });
