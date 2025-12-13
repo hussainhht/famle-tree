@@ -2374,6 +2374,23 @@ function renderTree() {
 
   document.getElementById("emptyState").classList.add("hidden");
 
+  // Calculate SVG size based on tree bounds
+  const xs = filteredPeople.map((p) => p.x || 0);
+  const ys = filteredPeople.map((p) => p.y || 0);
+  const minX = Math.min(...xs) - LAYOUT.NODE_WIDTH - 50;
+  const maxX = Math.max(...xs) + LAYOUT.NODE_WIDTH + 50;
+  const minY = Math.min(...ys) - LAYOUT.NODE_HEIGHT - 50;
+  const maxY = Math.max(...ys) + LAYOUT.NODE_HEIGHT + 50;
+
+  const svgWidth = Math.max(maxX - minX, svgElement.parentElement.clientWidth);
+  const svgHeight = Math.max(
+    maxY - minY,
+    svgElement.parentElement.clientHeight
+  );
+
+  svgElement.setAttribute("width", svgWidth);
+  svgElement.setAttribute("height", svgHeight);
+
   svgElement.innerHTML = `
     <defs>
       <filter id="nodeShadow" x="-50%" y="-50%" width="200%" height="200%">
@@ -2686,14 +2703,12 @@ function renderNodes(g, filteredPeople) {
     rect.setAttribute("width", nodeWidth);
     rect.setAttribute("height", nodeHeight);
     rect.setAttribute("rx", "6");
-    rect.classList.add(
-      "node-rect",
-      person.gender === "Male"
-        ? "node-male"
-        : person.gender === "Female"
-        ? "node-female"
-        : ""
-    );
+    rect.classList.add("node-rect");
+    if (person.gender === "Male") {
+      rect.classList.add("node-male");
+    } else if (person.gender === "Female") {
+      rect.classList.add("node-female");
+    }
 
     // Calculate max characters based on node width
     const maxNameChars = Math.floor((nodeWidth - 16) / 7); // Approximate char width
