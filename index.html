@@ -39,6 +39,28 @@
                             <span class="status-text">Saved</span>
                         </span>
                     </div>
+
+                    <!-- Branch Stats Badge -->
+                    <div class="branch-stats-badge" id="branchStatsBadge"
+                        title="Click to learn about branch metrics">
+                        <span class="badge-item" id="badgeRoots"
+                            title="Number of top-level family roots (separate family trees)">
+                            <svg viewBox="0 0 24 24" width="12"
+                                height="12"><path fill="currentColor"
+                                    d="M12 2L4.5 20.29l.71.71L12 18l6.79 3 .71-.71z" /></svg>
+                            <span>Roots: <strong
+                                    id="badgeRootsCount">0</strong></span>
+                        </span>
+                        <span class="badge-separator">|</span>
+                        <span class="badge-item" id="badgeBranches"
+                            title="Direct branches from selected person (children count)">
+                            <svg viewBox="0 0 24 24" width="12"
+                                height="12"><path fill="currentColor"
+                                    d="M22 11V3h-7v3H9V3H2v8h7V8h2v10h4v3h7v-8h-7v3h-2V8h2v3h7zM7 9H4V5h3v4zm10 6h3v4h-3v-4zm0-10h3v4h-3V5z" /></svg>
+                            <span>Branches: <strong
+                                    id="badgeBranchesCount">—</strong></span>
+                        </span>
+                    </div>
                 </div>
 
                 <!-- Project Controls (File Operations) -->
@@ -308,6 +330,81 @@
                 <div class="drawer-content" id="drawerContent">
                     <p class="drawer-placeholder">Select a person to view
                         details</p>
+                </div>
+
+                <!-- Branch Stats Section (always visible in drawer) -->
+                <div class="branch-stats-section" id="branchStatsSection">
+                    <div class="branch-stats-header">
+                        <h3>
+                            <svg viewBox="0 0 24 24" width="16"
+                                height="16"><path fill="currentColor"
+                                    d="M22 11V3h-7v3H9V3H2v8h7V8h2v10h4v3h7v-8h-7v3h-2V8h2v3h7zM7 9H4V5h3v4zm10 6h3v4h-3v-4zm0-10h3v4h-3V5z" /></svg>
+                            Branch Stats
+                        </h3>
+                        <button class="btn-icon btn-help"
+                            id="branchStatsHelpBtn"
+                            title="What do these metrics mean?">
+                            <svg viewBox="0 0 24 24" width="16"
+                                height="16"><path fill="currentColor"
+                                    d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z" /></svg>
+                        </button>
+                    </div>
+
+                    <div class="branch-stats-grid">
+                        <!-- Direct Branches -->
+                        <div class="stat-card" id="statDirectBranches">
+                            <div class="stat-icon direct">
+                                <svg viewBox="0 0 24 24" width="20"
+                                    height="20"><path fill="currentColor"
+                                        d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z" /></svg>
+                            </div>
+                            <div class="stat-content">
+                                <span class="stat-value"
+                                    id="statDirectValue">—</span>
+                                <span class="stat-label">Direct Branches</span>
+                            </div>
+                            <div class="stat-tooltip">Number of children from
+                                selected person (or couple)</div>
+                        </div>
+
+                        <!-- Leaf Lineages -->
+                        <div class="stat-card" id="statLeafLineages">
+                            <div class="stat-icon leaves">
+                                <svg viewBox="0 0 24 24" width="20"
+                                    height="20"><path fill="currentColor"
+                                        d="M17 8C8 10 5.9 16.17 3.82 21.34l1.89.66.95-2.3c.48.17.98.3 1.34.3C19 20 22 3 22 3c-1 2-8 2.25-13 3.25S2 11.5 2 13.5s1.75 3.75 1.75 3.75C7 8 17 8 17 8z" /></svg>
+                            </div>
+                            <div class="stat-content">
+                                <span class="stat-value"
+                                    id="statLeavesValue">—</span>
+                                <span class="stat-label">Leaf Lineages</span>
+                            </div>
+                            <div class="stat-tooltip">Descendant paths ending at
+                                people with no children</div>
+                        </div>
+
+                        <!-- Root Families -->
+                        <div class="stat-card" id="statRootFamilies">
+                            <div class="stat-icon roots">
+                                <svg viewBox="0 0 24 24" width="20"
+                                    height="20"><path fill="currentColor"
+                                        d="M12 2L4.5 20.29l.71.71L12 18l6.79 3 .71-.71z" /></svg>
+                            </div>
+                            <div class="stat-content">
+                                <span class="stat-value"
+                                    id="statRootsValue">0</span>
+                                <span class="stat-label">Root Families</span>
+                            </div>
+                            <div class="stat-tooltip">Distinct top-level family
+                                trees (people with no parents)</div>
+                        </div>
+                    </div>
+
+                    <div class="branch-stats-note" id="branchStatsNote">
+                        <span class="note-icon">💡</span>
+                        <span id="branchStatsNoteText">Select a person to see
+                            their branch statistics</span>
+                    </div>
                 </div>
             </aside>
         </main>

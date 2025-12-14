@@ -199,6 +199,9 @@ function debouncedSave() {
   clearTimeout(window.saveTimeout);
   window.saveTimeout = setTimeout(saveData, 300);
 
+  // Invalidate branch stats cache when data changes
+  invalidateBranchStatsCache();
+
   // Mark as unsaved and trigger auto-save if we have a file handle
   markUnsaved();
   triggerAutoSave();
@@ -966,6 +969,12 @@ function initializeUI() {
   document
     .getElementById("closeDrawerBtn")
     .addEventListener("click", closeDrawer);
+
+  // Branch Stats Help Button
+  const branchStatsHelpBtn = document.getElementById("branchStatsHelpBtn");
+  if (branchStatsHelpBtn) {
+    branchStatsHelpBtn.addEventListener("click", showBranchStatsHelp);
+  }
 
   // SVG
   svgElement = document.getElementById("treeSvg");
@@ -2405,9 +2414,449 @@ function buildFamilyGraph() {
   return graph;
 }
 
+// ===== BRANCH STATS CALCULATOR =====
+// Caching for performance optimization
+let branchStatsCache = {
+  graph: null,
+  rootFamilies: null,
+  directBranches: new Map(), // personId -> count
+  leafLineages: new Map(), // personId -> count
+  dataVersion: null, // Track when data changes
+  lastSelectedId: null, // Track selection changes
+};
+
+/**
+ * Mark branch stats cache as dirty (needs recalculation)
+ * Call this whenever data changes
+ */
+function invalidateBranchStatsCache() {
+  branchStatsCache.dataVersion = null;
+}
+
+/**
+ * Get current data version for cache validation
+ */
+function getDataVersion() {
+  // Simple hash based on counts and last update time
+  return `${state.people.length}_${state.relations.length}_${
+    state.meta?.updatedAt || ""
+  }`;
+}
+
+/**
+ * Calculate all branch statistics
+ * Uses caching for performance - only recalculates when data changes
+ * @returns {Object} { directBranches, leafLineages, rootFamilies, selectedPersonName }
+ */
+function calculateBranchStats(personId = null) {
+  const currentVersion = getDataVersion();
+  const needsFullRecalc = branchStatsCache.dataVersion !== currentVersion;
+
+  // Rebuild graph if data changed
+  if (needsFullRecalc) {
+    branchStatsCache.graph = buildFamilyGraph();
+    branchStatsCache.dataVersion = currentVersion;
+    branchStatsCache.directBranches.clear();
+    branchStatsCache.leafLineages.clear();
+    branchStatsCache.rootFamilies = null;
+  }
+
+  const graph = branchStatsCache.graph;
+
+  // Calculate root families (whole tree metric) - cached
+  if (branchStatsCache.rootFamilies === null) {
+    branchStatsCache.rootFamilies = calculateRootFamilies(graph);
+  }
+
+  let directBranches = null;
+  let leafLineages = null;
+  let selectedPersonName = null;
+
+  // Calculate person-specific metrics if a person is selected
+  if (personId && graph.nodes.has(personId)) {
+    const person = state.people.find((p) => p.id === personId);
+    selectedPersonName = person?.name || "Unknown";
+
+    // Direct Branches - cached per person
+    if (!branchStatsCache.directBranches.has(personId)) {
+      branchStatsCache.directBranches.set(
+        personId,
+        calculateDirectBranches(graph, personId)
+      );
+    }
+    directBranches = branchStatsCache.directBranches.get(personId);
+
+    // Leaf Lineages - cached per person
+    if (!branchStatsCache.leafLineages.has(personId)) {
+      branchStatsCache.leafLineages.set(
+        personId,
+        calculateLeafLineages(graph, personId)
+      );
+    }
+    leafLineages = branchStatsCache.leafLineages.get(personId);
+  }
+
+  return {
+    directBranches,
+    leafLineages,
+    rootFamilies: branchStatsCache.rootFamilies,
+    selectedPersonName,
+  };
+}
+
+/**
+ * A) Direct Branches - Number of distinct child-subtrees from the selected person
+ * Counts children of the selected person (or couple if spouse exists and they share children)
+ * @param {Object} graph - The family graph
+ * @param {string} personId - The selected person's ID
+ * @returns {number} Count of direct children (branches)
+ */
+function calculateDirectBranches(graph, personId) {
+  if (!graph || !personId) return 0;
+
+  // Get all family members (person + their spouses)
+  const familyMembers = [personId];
+  const spouses = graph.spouseOf.get(personId) || [];
+  familyMembers.push(...spouses);
+
+  // Collect all unique children of this family unit
+  const allChildren = new Set();
+  familyMembers.forEach((memberId) => {
+    const children = graph.parentOf.get(memberId) || [];
+    children.forEach((childId) => allChildren.add(childId));
+  });
+
+  return allChildren.size;
+}
+
+/**
+ * B) Leaf Lineages - Number of leaf descendant lines under the selected person
+ * A "leaf" is a descendant with no children
+ * Uses graph traversal from selected person downward
+ * @param {Object} graph - The family graph
+ * @param {string} personId - The selected person's ID
+ * @returns {number} Count of unique leaf descendants reachable from this person
+ */
+function calculateLeafLineages(graph, personId) {
+  if (!graph || !personId) return 0;
+
+  const visited = new Set();
+  let leafCount = 0;
+
+  /**
+   * Recursive DFS to find all leaf descendants
+   * @param {string} currentId - Current person being visited
+   */
+  function traverseDescendants(currentId) {
+    // Prevent infinite loops (cycle detection)
+    if (visited.has(currentId)) return;
+    visited.add(currentId);
+
+    // Get all children of this person
+    const children = graph.parentOf.get(currentId) || [];
+
+    if (children.length === 0) {
+      // This is a leaf (no children)
+      // Only count if it's a descendant (not the selected person themselves)
+      if (currentId !== personId) {
+        leafCount++;
+      }
+    } else {
+      // Traverse to children
+      children.forEach((childId) => traverseDescendants(childId));
+    }
+  }
+
+  // Start traversal from the selected person
+  traverseDescendants(personId);
+
+  // Also traverse from spouses' children (for shared family unit)
+  const spouses = graph.spouseOf.get(personId) || [];
+  spouses.forEach((spouseId) => {
+    const spouseChildren = graph.parentOf.get(spouseId) || [];
+    spouseChildren.forEach((childId) => {
+      if (!visited.has(childId)) {
+        traverseDescendants(childId);
+      }
+    });
+  });
+
+  // If selected person has no descendants, return 0
+  // If selected person IS a leaf (no children), indicate that
+  const totalChildren = new Set();
+  [personId, ...spouses].forEach((id) => {
+    (graph.parentOf.get(id) || []).forEach((c) => totalChildren.add(c));
+  });
+
+  if (totalChildren.size === 0) {
+    return 0; // No branches means no leaf lineages
+  }
+
+  return leafCount;
+}
+
+/**
+ * C) Root Families - Number of top-level family roots (distinct trees/forests)
+ * Finds all root ancestors (people with no parents) and counts distinct family trees
+ * @param {Object} graph - The family graph
+ * @returns {number} Count of distinct root families
+ */
+function calculateRootFamilies(graph) {
+  if (!graph || graph.nodes.size === 0) return 0;
+
+  // Find all people with no parents (root ancestors)
+  const rootPeople = [];
+  graph.nodes.forEach((node, personId) => {
+    const parents = graph.childOf.get(personId) || [];
+    if (parents.length === 0) {
+      rootPeople.push(personId);
+    }
+  });
+
+  if (rootPeople.length === 0) return 0;
+
+  // Group roots into connected components (family units)
+  // Spouses without parents form one family unit together
+  const visited = new Set();
+  let familyCount = 0;
+
+  rootPeople.forEach((rootId) => {
+    if (visited.has(rootId)) return;
+
+    // Mark this root and all their spouses as one family
+    visited.add(rootId);
+    familyCount++;
+
+    // Mark spouses (who are also roots) as part of this family
+    const spouses = graph.spouseOf.get(rootId) || [];
+    spouses.forEach((spouseId) => {
+      const spouseParents = graph.childOf.get(spouseId) || [];
+      if (spouseParents.length === 0) {
+        // Spouse is also a root, count as same family
+        visited.add(spouseId);
+      }
+    });
+  });
+
+  return familyCount;
+}
+
+/**
+ * Update the Branch Stats UI elements
+ * Called whenever selection changes or data is modified
+ */
+function updateBranchStatsUI() {
+  const stats = calculateBranchStats(selectedPersonId);
+
+  // Update navbar badge
+  const badgeRootsEl = document.getElementById("badgeRootsCount");
+  const badgeBranchesEl = document.getElementById("badgeBranchesCount");
+
+  if (badgeRootsEl) {
+    badgeRootsEl.textContent = stats.rootFamilies;
+  }
+
+  if (badgeBranchesEl) {
+    if (stats.directBranches !== null) {
+      badgeBranchesEl.textContent = stats.directBranches;
+    } else {
+      badgeBranchesEl.textContent = "—";
+    }
+  }
+
+  // Update drawer stats section
+  const directValueEl = document.getElementById("statDirectValue");
+  const leavesValueEl = document.getElementById("statLeavesValue");
+  const rootsValueEl = document.getElementById("statRootsValue");
+  const noteEl = document.getElementById("branchStatsNote");
+  const noteTextEl = document.getElementById("branchStatsNoteText");
+
+  if (directValueEl) {
+    const newValue = stats.directBranches !== null ? stats.directBranches : "—";
+    if (directValueEl.textContent !== String(newValue)) {
+      directValueEl.textContent = newValue;
+      directValueEl.classList.add("updated");
+      setTimeout(() => directValueEl.classList.remove("updated"), 300);
+    }
+  }
+
+  if (leavesValueEl) {
+    const newValue = stats.leafLineages !== null ? stats.leafLineages : "—";
+    if (leavesValueEl.textContent !== String(newValue)) {
+      leavesValueEl.textContent = newValue;
+      leavesValueEl.classList.add("updated");
+      setTimeout(() => leavesValueEl.classList.remove("updated"), 300);
+    }
+  }
+
+  if (rootsValueEl) {
+    const newValue = stats.rootFamilies;
+    if (rootsValueEl.textContent !== String(newValue)) {
+      rootsValueEl.textContent = newValue;
+      rootsValueEl.classList.add("updated");
+      setTimeout(() => rootsValueEl.classList.remove("updated"), 300);
+    }
+  }
+
+  // Update note text
+  if (noteEl && noteTextEl) {
+    if (stats.selectedPersonName) {
+      noteEl.classList.add("has-selection");
+      noteTextEl.innerHTML = `Stats for <strong>${escapeHtml(
+        stats.selectedPersonName
+      )}</strong>: ${stats.directBranches} direct branch${
+        stats.directBranches !== 1 ? "es" : ""
+      }, ${stats.leafLineages} leaf lineage${
+        stats.leafLineages !== 1 ? "s" : ""
+      }`;
+    } else {
+      noteEl.classList.remove("has-selection");
+      noteTextEl.textContent = "Select a person to see their branch statistics";
+    }
+  }
+}
+
+/**
+ * Show help modal explaining branch metrics
+ */
+function showBranchStatsHelp() {
+  const content = `
+    <div class="branch-help-content">
+      <div class="branch-help-item">
+        <h4>
+          <span style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:linear-gradient(135deg,#e3f2fd,#bbdefb);color:#1976d2;">📊</span>
+          Direct Branches
+        </h4>
+        <p>The number of children from the selected person (or couple if they have shared children with a spouse). This represents immediate descendants.</p>
+        <div class="example">Example: If John has 3 children, his Direct Branches = 3</div>
+      </div>
+
+      <div class="branch-help-item">
+        <h4>
+          <span style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:linear-gradient(135deg,#e8f5e9,#c8e6c9);color:#2c5f2d;">🍃</span>
+          Leaf Lineages
+        </h4>
+        <p>The count of descendant paths that end at "leaves" — people with no children. This shows how many distinct family lines extend from the selected person.</p>
+        <div class="example">Example: If John has 2 grandchildren who have no children, his Leaf Lineages = 2</div>
+      </div>
+
+      <div class="branch-help-item">
+        <h4>
+          <span style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:linear-gradient(135deg,#fff3e0,#ffe0b2);color:#e65100;">🏛️</span>
+          Root Families
+        </h4>
+        <p>The number of separate family trees in your entire dataset. A root family starts with people who have no parents defined (ancestors at the top of the tree).</p>
+        <div class="example">Example: If you have 2 unconnected family trees, Root Families = 2</div>
+      </div>
+    </div>
+  `;
+
+  showCustomModal("Branch Stats Explained", content);
+}
+
+/**
+ * Show a custom modal with HTML content
+ */
+function showCustomModal(title, htmlContent) {
+  // Create modal if it doesn't exist
+  let modal = document.getElementById("customInfoModal");
+  if (!modal) {
+    modal = document.createElement("div");
+    modal.id = "customInfoModal";
+    modal.className = "modal hidden";
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.innerHTML = `
+      <div class="modal-overlay" onclick="closeCustomModal()"></div>
+      <div class="modal-content modal-medium">
+        <div class="modal-header">
+          <h2 id="customModalTitle"></h2>
+          <button class="btn-icon" onclick="closeCustomModal()" aria-label="Close modal">
+            <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+          </button>
+        </div>
+        <div class="modal-body" id="customModalBody"></div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+  }
+
+  document.getElementById("customModalTitle").textContent = title;
+  document.getElementById("customModalBody").innerHTML = htmlContent;
+  closeAllModals();
+  modal.classList.remove("hidden");
+}
+
+/**
+ * Close the custom info modal
+ */
+function closeCustomModal() {
+  const modal = document.getElementById("customInfoModal");
+  if (modal) {
+    modal.classList.add("hidden");
+  }
+}
+
+// Make closeCustomModal available globally
+window.closeCustomModal = closeCustomModal;
+
+/**
+ * Test function for branch stats - logs metrics for verification
+ * Can be called from console: testBranchStats()
+ */
+function testBranchStats() {
+  console.log("=== Branch Stats Test ===");
+  console.log(`Total people: ${state.people.length}`);
+  console.log(`Total relations: ${state.relations.length}`);
+
+  const graph = buildFamilyGraph();
+
+  // Test Root Families
+  const rootFamilies = calculateRootFamilies(graph);
+  console.log(`\nC) Root Families (whole tree): ${rootFamilies}`);
+
+  // Find and list root people
+  const rootPeople = [];
+  graph.nodes.forEach((node, personId) => {
+    const parents = graph.childOf.get(personId) || [];
+    if (parents.length === 0) {
+      const person = state.people.find((p) => p.id === personId);
+      rootPeople.push(person?.name || personId);
+    }
+  });
+  console.log(`   Root ancestors: ${rootPeople.join(", ")}`);
+
+  // Test for each person
+  console.log("\n=== Per-Person Stats ===");
+  state.people.forEach((person) => {
+    const direct = calculateDirectBranches(graph, person.id);
+    const leaves = calculateLeafLineages(graph, person.id);
+    console.log(`${person.name}: Direct=${direct}, Leaves=${leaves}`);
+  });
+
+  // Test for selected person if any
+  if (selectedPersonId) {
+    const person = state.people.find((p) => p.id === selectedPersonId);
+    const stats = calculateBranchStats(selectedPersonId);
+    console.log(`\n=== Selected Person: ${person?.name} ===`);
+    console.log(`A) Direct Branches: ${stats.directBranches}`);
+    console.log(`B) Leaf Lineages: ${stats.leafLineages}`);
+    console.log(`C) Root Families: ${stats.rootFamilies}`);
+  }
+
+  console.log("\n=== Test Complete ===");
+  return { rootFamilies, people: state.people.length };
+}
+
+// Make test function available globally for console testing
+window.testBranchStats = testBranchStats;
+
 // ===== RENDERING =====
 function renderTree() {
   const filteredPeople = getFilteredPeople();
+
+  // Update branch stats UI on every render (uses caching for performance)
+  updateBranchStatsUI();
 
   if (filteredPeople.length === 0) {
     document.getElementById("emptyState").classList.remove("hidden");
