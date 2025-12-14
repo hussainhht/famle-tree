@@ -40,6 +40,11 @@ let svgElement = null;
 let searchQuery = "";
 let currentRelationshipType = null;
 
+// ===== MULTI-LINK STATE =====
+let multiLinkMode = false;
+let multiSelectedIds = new Set(); // Set of person IDs selected for multi-link
+let lastLinkAction = null; // 'child' | 'parent' | 'spouse' - for Enter key shortcut
+
 // ===== FILE SYSTEM STATE =====
 let fileHandle = null; // File System Access API handle
 let hasUnsavedChanges = false;
@@ -94,6 +99,14 @@ function initializeFileSystem() {
 }
 
 function handleKeyboardShortcuts(e) {
+  // Skip if user is typing in an input field
+  const activeElement = document.activeElement;
+  const isInputField =
+    activeElement &&
+    (activeElement.tagName === "INPUT" ||
+      activeElement.tagName === "TEXTAREA" ||
+      activeElement.isContentEditable);
+
   // Ctrl+N: New Project
   if (e.ctrlKey && e.key === "n") {
     e.preventDefault();
@@ -113,6 +126,36 @@ function handleKeyboardShortcuts(e) {
   if (e.ctrlKey && e.shiftKey && e.key === "S") {
     e.preventDefault();
     saveProjectAs();
+  }
+
+  // ===== MULTI-LINK KEYBOARD SHORTCUTS =====
+
+  // ESC: Clear multi-selection or close drawer
+  if (e.key === "Escape") {
+    if (multiSelectedIds.size > 0) {
+      e.preventDefault();
+      clearMultiSelection();
+    } else if (document.getElementById("drawer").classList.contains("open")) {
+      closeDrawer();
+    }
+  }
+
+  // Enter: Repeat last link action (if we have a selection and not in input)
+  if (
+    e.key === "Enter" &&
+    !isInputField &&
+    selectedPersonId &&
+    multiSelectedIds.size > 0 &&
+    lastLinkAction
+  ) {
+    e.preventDefault();
+    if (lastLinkAction === "child") {
+      multiLinkAsChildren();
+    } else if (lastLinkAction === "parent") {
+      multiLinkAsParents();
+    } else if (lastLinkAction === "spouse") {
+      multiLinkAsSpouses();
+    }
   }
 }
 
@@ -2689,8 +2732,14 @@ function renderNodes(g, filteredPeople) {
     group.classList.add("node-group", "node");
     group.dataset.personId = person.id;
 
+    // Primary selection highlight
     if (person.id === selectedPersonId) {
       group.classList.add("selected");
+    }
+
+    // Multi-selection highlight
+    if (multiSelectedIds.has(person.id)) {
+      group.classList.add("multi-selected");
     }
 
     // Node rectangle with consistent sizing
@@ -2805,13 +2854,278 @@ function renderNodes(g, filteredPeople) {
       e.stopPropagation();
       // Only select if not moved during drag
       if (!viewState.nodeMoved) {
-        selectPerson(person.id);
+        handleNodeClick(person.id, e);
       }
       viewState.nodeMoved = false;
     });
 
     g.appendChild(group);
   });
+}
+
+/**
+ * Handle node click - supports multi-select with Shift key or Multi-Link Mode
+ */
+function handleNodeClick(personId, event) {
+  const isShiftHeld = event && event.shiftKey;
+
+  // If shift is held OR multi-link mode is on, toggle multi-selection
+  if (
+    (isShiftHeld || multiLinkMode) &&
+    selectedPersonId &&
+    personId !== selectedPersonId
+  ) {
+    toggleMultiSelect(personId);
+    return;
+  }
+
+  // Normal selection - clear multi-selection and select new person
+  clearMultiSelection();
+  selectPerson(personId);
+}
+
+/**
+ * Toggle a person in the multi-selection set
+ */
+function toggleMultiSelect(personId) {
+  if (personId === selectedPersonId) return; // Can't multi-select the main selected person
+
+  if (multiSelectedIds.has(personId)) {
+    multiSelectedIds.delete(personId);
+  } else {
+    multiSelectedIds.add(personId);
+  }
+
+  renderTree();
+  updateDrawer();
+}
+
+/**
+ * Clear all multi-selections
+ */
+function clearMultiSelection() {
+  multiSelectedIds.clear();
+  renderTree();
+  updateDrawer();
+}
+
+/**
+ * Toggle Multi-Link Mode on/off
+ */
+function toggleMultiLinkMode() {
+  multiLinkMode = !multiLinkMode;
+  if (!multiLinkMode) {
+    clearMultiSelection();
+  }
+  renderTree();
+  updateDrawer();
+}
+
+// ===== MULTI-LINK VALIDATION & ACTIONS =====
+
+/**
+ * Check if a person is already a child of the selected person
+ */
+function isAlreadyChild(childId, parentId) {
+  return state.relations.some(
+    (r) => r.type === "PARENT_CHILD" && r.aId === parentId && r.bId === childId
+  );
+}
+
+/**
+ * Check if a person is already a parent of the selected person
+ */
+function isAlreadyParent(parentId, childId) {
+  return state.relations.some(
+    (r) => r.type === "PARENT_CHILD" && r.aId === parentId && r.bId === childId
+  );
+}
+
+/**
+ * Check if a person is already a spouse of the selected person
+ */
+function isAlreadySpouse(personId, targetId) {
+  return state.relations.some(
+    (r) =>
+      r.type === "SPOUSE" &&
+      ((r.aId === personId && r.bId === targetId) ||
+        (r.aId === targetId && r.bId === personId))
+  );
+}
+
+/**
+ * Count how many parents a person currently has
+ */
+function getParentCount(personId) {
+  return state.relations.filter(
+    (r) => r.type === "PARENT_CHILD" && r.bId === personId
+  ).length;
+}
+
+/**
+ * Check if linking would create a cycle (child becoming parent's ancestor)
+ */
+function wouldCreateCycle(parentId, childId) {
+  // Check if childId is an ancestor of parentId
+  const visited = new Set();
+  const queue = [parentId];
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (current === childId) return true;
+    if (visited.has(current)) continue;
+    visited.add(current);
+
+    // Get parents of current
+    const parents = state.relations
+      .filter((r) => r.type === "PARENT_CHILD" && r.bId === current)
+      .map((r) => r.aId);
+    queue.push(...parents);
+  }
+
+  return false;
+}
+
+/**
+ * Link all multi-selected people as children of the selected person
+ */
+function multiLinkAsChildren() {
+  if (!selectedPersonId || multiSelectedIds.size === 0) return;
+
+  const linked = [];
+  const skipped = [];
+
+  for (const targetId of multiSelectedIds) {
+    const targetPerson = state.people.find((p) => p.id === targetId);
+    const targetName = targetPerson?.name || "Unknown";
+
+    // Validation checks
+    if (targetId === selectedPersonId) {
+      skipped.push(`${targetName}: Cannot link to self`);
+      continue;
+    }
+    if (isAlreadyChild(targetId, selectedPersonId)) {
+      skipped.push(`${targetName}: Already a child`);
+      continue;
+    }
+    if (wouldCreateCycle(selectedPersonId, targetId)) {
+      skipped.push(`${targetName}: Would create cycle`);
+      continue;
+    }
+
+    // Add the relationship
+    addRelation("child", selectedPersonId, targetId);
+    linked.push(targetName);
+  }
+
+  // Show results
+  finishMultiLink("child", linked, skipped);
+}
+
+/**
+ * Link all multi-selected people as parents of the selected person
+ */
+function multiLinkAsParents() {
+  if (!selectedPersonId || multiSelectedIds.size === 0) return;
+
+  const linked = [];
+  const skipped = [];
+  const currentParentCount = getParentCount(selectedPersonId);
+  let addedParents = 0;
+
+  for (const targetId of multiSelectedIds) {
+    const targetPerson = state.people.find((p) => p.id === targetId);
+    const targetName = targetPerson?.name || "Unknown";
+
+    // Validation checks
+    if (targetId === selectedPersonId) {
+      skipped.push(`${targetName}: Cannot link to self`);
+      continue;
+    }
+    if (isAlreadyParent(targetId, selectedPersonId)) {
+      skipped.push(`${targetName}: Already a parent`);
+      continue;
+    }
+    if (currentParentCount + addedParents >= 2) {
+      skipped.push(`${targetName}: Max 2 parents allowed`);
+      continue;
+    }
+    if (wouldCreateCycle(targetId, selectedPersonId)) {
+      skipped.push(`${targetName}: Would create cycle`);
+      continue;
+    }
+
+    // Add the relationship
+    addRelation("parent", selectedPersonId, targetId);
+    linked.push(targetName);
+    addedParents++;
+  }
+
+  // Show results
+  finishMultiLink("parent", linked, skipped);
+}
+
+/**
+ * Link all multi-selected people as spouses of the selected person
+ */
+function multiLinkAsSpouses() {
+  if (!selectedPersonId || multiSelectedIds.size === 0) return;
+
+  const linked = [];
+  const skipped = [];
+
+  for (const targetId of multiSelectedIds) {
+    const targetPerson = state.people.find((p) => p.id === targetId);
+    const targetName = targetPerson?.name || "Unknown";
+
+    // Validation checks
+    if (targetId === selectedPersonId) {
+      skipped.push(`${targetName}: Cannot link to self`);
+      continue;
+    }
+    if (isAlreadySpouse(selectedPersonId, targetId)) {
+      skipped.push(`${targetName}: Already a spouse`);
+      continue;
+    }
+
+    // Add the relationship
+    addRelation("spouse", selectedPersonId, targetId);
+    linked.push(targetName);
+  }
+
+  // Show results
+  finishMultiLink("spouse", linked, skipped);
+}
+
+/**
+ * Finish multi-link operation - show results, save, and update UI
+ */
+function finishMultiLink(actionType, linked, skipped) {
+  lastLinkAction = actionType;
+
+  // Save and update
+  saveData();
+  clearMultiSelection();
+  renderTree();
+  updateDrawer();
+
+  // Show success message
+  if (linked.length > 0) {
+    const actionLabel =
+      actionType === "child"
+        ? "children"
+        : actionType === "parent"
+        ? "parents"
+        : "spouses";
+    showToast(`Linked ${linked.length} ${actionLabel}`, "success");
+  }
+
+  // Show warnings for skipped items
+  if (skipped.length > 0) {
+    setTimeout(() => {
+      showToast(`Skipped: ${skipped.join("; ")}`, "warning", 5000);
+    }, 500);
+  }
 }
 
 function selectPerson(personId) {
@@ -2973,6 +3287,100 @@ function updateDrawer() {
     </div>
   `;
 
+  // ===== MULTI-LINK MODE SECTION =====
+  const multiSelectCount = multiSelectedIds.size;
+  const selectedNames = Array.from(multiSelectedIds)
+    .map((id) => state.people.find((p) => p.id === id)?.name || "Unknown")
+    .slice(0, 3);
+  const moreCount = multiSelectedIds.size - 3;
+
+  html += `
+    <div class="info-section multi-link-section">
+      <h3>Multi-Link Mode</h3>
+      
+      <label class="toggle-switch">
+        <input type="checkbox" id="multiLinkToggle" ${
+          multiLinkMode ? "checked" : ""
+        } onchange="toggleMultiLinkMode()">
+        <span class="toggle-slider"></span>
+        <span class="toggle-label">Enable Multi-Link</span>
+      </label>
+      
+      ${
+        multiLinkMode
+          ? `
+        <div class="multi-link-hint">
+          <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+          Click people to select targets (or hold Shift)
+        </div>
+      `
+          : ""
+      }
+      
+      <div class="multi-select-counter">
+        <span class="counter-badge ${
+          multiSelectCount > 0 ? "has-selection" : ""
+        }">
+          Selected: ${multiSelectCount}
+        </span>
+        ${
+          multiSelectCount > 0
+            ? `
+          <button class="btn-clear-selection" onclick="clearMultiSelection()" title="Clear selection (Esc)">
+            <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+            Clear
+          </button>
+        `
+            : ""
+        }
+      </div>
+      
+      ${
+        multiSelectCount > 0
+          ? `
+        <div class="multi-select-list">
+          ${selectedNames
+            .map(
+              (name) =>
+                `<span class="selected-name-tag">${escapeHtml(name)}</span>`
+            )
+            .join("")}
+          ${
+            moreCount > 0
+              ? `<span class="selected-name-tag more">+${moreCount} more</span>`
+              : ""
+          }
+        </div>
+      `
+          : ""
+      }
+      
+      <div class="multi-link-actions">
+        <button class="btn-action btn-multi-link" onclick="multiLinkAsChildren()" ${
+          multiSelectCount === 0 ? "disabled" : ""
+        }>
+          <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+          Link as Children
+        </button>
+        <button class="btn-action btn-multi-link" onclick="multiLinkAsParents()" ${
+          multiSelectCount === 0 ? "disabled" : ""
+        }>
+          <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+          Link as Parents
+        </button>
+        <button class="btn-action btn-multi-link" onclick="multiLinkAsSpouses()" ${
+          multiSelectCount === 0 ? "disabled" : ""
+        }>
+          <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+          Link as Spouse(s)
+        </button>
+      </div>
+      
+      <div class="multi-link-shortcuts">
+        <kbd>Shift+Click</kbd> multi-select &bull; <kbd>Esc</kbd> clear &bull; <kbd>Enter</kbd> repeat last
+      </div>
+    </div>
+  `;
   document.getElementById("drawerContent").innerHTML = html;
 }
 
@@ -3489,7 +3897,7 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
-function showToast(message, type = "info") {
+function showToast(message, type = "info", duration = 3000) {
   const container = document.getElementById("toastContainer");
   const toast = document.createElement("div");
   toast.className = `toast ${type}`;
@@ -3498,7 +3906,7 @@ function showToast(message, type = "info") {
   setTimeout(() => {
     toast.style.animation = "slideOut 300ms ease-in forwards";
     setTimeout(() => toast.remove(), 300);
-  }, 3000);
+  }, duration);
 }
 
 // Close menu on outside click
